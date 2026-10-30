@@ -139,10 +139,7 @@ TRL `DPOTrainer` schema:
 
 ### 1. Environment Setup
 ```powershell
-# Using the existing project virtual environment
-& 'D:\Resolve\.venv\Scripts\Activate.ps1'
-
-# Or install dependencies
+# install dependencies
 pip install -r requirements.txt
 ```
 
