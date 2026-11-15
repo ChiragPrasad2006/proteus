@@ -1,0 +1,74 @@
+[
+  {
+    "message_id": "demo-001", "recipient_email": "alex@acme.example", "recipient_domain": "acme.example", "subject": "Migration checkpoint", "timestamp": "2026-10-01T09:00:00Z", "thread_id": "demo-thread-1",
+    "raw_body": "<div>Hi Alex,</div><div><br></div><div>The migration completed this morning and the validation checks are green. Please review the rollout notes before Thursday so we can close the remaining operational risks with the platform team.</div><div><br></div><div>Best,</div><div>Sam</div>"
+  },
+  {
+    "message_id": "demo-002", "recipient_email": "morgan@acme.example", "recipient_domain": "acme.example", "subject": "Release readiness", "timestamp": "2026-10-02T09:00:00Z", "thread_id": "demo-thread-2",
+    "raw_body": "Hi Morgan,\n\nThe release candidate passed the full regression suite and production metrics look normal. I need your approval on the rollback window before we publish the customer notice tomorrow morning.\n\nBest,\nSam"
+  },
+  {
+    "message_id": "demo-003", "recipient_email": "lee@vendor.example", "recipient_domain": "vendor.example", "subject": "Contract review", "timestamp": "2026-10-03T09:00:00Z", "thread_id": "demo-thread-3",
+    "raw_body": "Hello Lee,\n\nI reviewed the renewal language and the pricing changes still need clarification. Please send the revised usage tiers and payment schedule before our Friday call so legal can complete its review.\n\nRegards,\nSam"
+  },
+  {
+    "message_id": "demo-004", "recipient_email": "priya@client.example", "recipient_domain": "client.example", "subject": "Weekly delivery update", "timestamp": "2026-10-04T09:00:00Z", "thread_id": "demo-thread-4",
+    "raw_body": "Hi Priya,\n\nThis week's delivery is on track. The team finished the data import work, completed the access review, and started the dashboard migration. We will send the remaining open questions after tomorrow's working session.\n\nBest,\nSam"
+  },
+  {
+    "message_id": "demo-005", "recipient_email": "jamie@client.example", "recipient_domain": "client.example", "subject": "Follow-up on dashboard access", "timestamp": "2026-10-05T09:00:00Z", "thread_id": "demo-thread-5",
+    "raw_body": "Hey Jamie,\n\nThe access issue is fixed and the new permission set is active. Could you confirm that your reporting team can open the shared dashboard and export the monthly usage summary without errors?\n\nThanks,\nSam"
+  },
+  {
+    "message_id": "demo-006", "recipient_email": "nora@acme.example", "recipient_domain": "acme.example", "subject": "Planning agenda", "timestamp": "2026-10-06T09:00:00Z", "thread_id": "demo-thread-6",
+    "raw_body": "Hi Nora,\n\nFor Monday's planning review, I suggest we focus on the launch date, vendor dependency, and support coverage. I attached the current risk list so we can make decisions without extending the meeting.\n\nBest,\nSam"
+  },
+  {
+    "message_id": "demo-007", "recipient_email": "omar@partner.example", "recipient_domain": "partner.example", "subject": "API latency findings", "timestamp": "2026-10-07T09:00:00Z", "thread_id": "demo-thread-7",
+    "raw_body": "Hi Omar,\n\nWe traced the latency spike to the batch endpoint during peak traffic. The immediate mitigation is deployed, and the permanent fix is scheduled for the next maintenance window after your team confirms the test results.\n\nBest,\nSam\n\nOn Tue, Omar wrote:\n> Can you share the latest status?"
+  },
+  {
+    "message_id": "demo-008", "recipient_email": "casey@vendor.example", "recipient_domain": "vendor.example", "subject": "Invoice reconciliation", "timestamp": "2026-10-08T09:00:00Z", "thread_id": "demo-thread-8",
+    "raw_body": "Hello Casey,\n\nThe invoice contains an increase that does not match the signed rate card. Please reconcile the listed seats, apply the contracted discount, and return a corrected copy before accounts payable processes the October batch.\n\nRegards,\nSam"
+  },
+  {
+    "message_id": "demo-009", "recipient_email": "alex@acme.example", "recipient_domain": "acme.example", "subject": "Incident follow-up", "timestamp": "2026-10-09T09:00:00Z", "thread_id": "demo-thread-9",
+    "raw_body": "Hi Alex,\n\nThe incident review identified a missing alert threshold and an unclear handoff between teams. We have assigned owners for both fixes and will verify the new alert path during Wednesday's resilience exercise.\n\nBest,\nSam"
+  },
+  {
+    "message_id": "demo-010", "recipient_email": "drew@client.example", "recipient_domain": "client.example", "subject": "Training session options", "timestamp": "2026-10-10T09:00:00Z", "thread_id": "demo-thread-10",
+    "raw_body": "Hey Drew,\n\nWe can run the administrator training next Tuesday or Wednesday. The session includes account setup, audit exports, and the escalation process, then leaves time for your team to test its most common workflow.\n\nThanks,\nSam"
+  },
+  {
+    "message_id": "demo-011", "recipient_email": "lee@vendor.example", "recipient_domain": "vendor.example", "subject": "Security questionnaire", "timestamp": "2026-10-11T09:00:00Z", "thread_id": "demo-thread-11",
+    "raw_body": "Hello Lee,\n\nThe security questionnaire is nearly complete. We still need confirmation about log retention, regional backup locations, and the incident notification timeline. Please send those details so the review can move to approval.\n\nRegards,\nSam"
+  },
+  {
+    "message_id": "demo-012", "recipient_email": "priya@client.example", "recipient_domain": "client.example", "subject": "Implementation actions", "timestamp": "2026-10-12T09:00:00Z", "thread_id": "demo-thread-12",
+    "raw_body": "Hi Priya,\n\nHere are the actions from today's implementation call:\n- Confirm the data owner for each source system.\n- Validate the field mappings in the shared sheet.\n- Book a short review once the test import finishes.\n\nBest,\nSam"
+  },
+  {
+    "message_id": "demo-013", "recipient_email": "nora@acme.example", "recipient_domain": "acme.example", "subject": "Budget decision", "timestamp": "2026-10-13T09:00:00Z", "thread_id": "demo-thread-13",
+    "raw_body": "Hi Nora,\n\nThe revised budget stays within the approved range and protects the critical implementation milestones. I recommend confirming the allocation this week because the vendor reservation expires before the next steering meeting.\n\nBest,\nSam"
+  },
+  {
+    "message_id": "demo-014", "recipient_email": "omar@partner.example", "recipient_domain": "partner.example", "subject": "Test environment status", "timestamp": "2026-10-14T09:00:00Z", "thread_id": "demo-thread-14",
+    "raw_body": "Hi Omar,\n\nThe test environment is ready for your integration run. Credentials were rotated, sample records were refreshed, and the monitoring dashboard is available. Please report any blocking behavior through the shared issue queue.\n\nBest,\nSam"
+  },
+  {
+    "message_id": "demo-015", "recipient_email": "jamie@client.example", "recipient_domain": "client.example", "subject": "Usage review", "timestamp": "2026-10-15T09:00:00Z", "thread_id": "demo-thread-15",
+    "raw_body": "Hey Jamie,\n\nThe usage review shows stronger adoption after the onboarding session, especially for scheduled reports. We should still address the slower export path before the quarterly review so the operations team has a smoother close process.\n\nThanks,\nSam"
+  },
+  {
+    "message_id": "demo-016", "recipient_email": "casey@vendor.example", "recipient_domain": "vendor.example", "subject": "Support coverage", "timestamp": "2026-10-16T09:00:00Z", "thread_id": "demo-thread-16",
+    "raw_body": "Hello Casey,\n\nPlease confirm the weekend support contacts and escalation route for the release window. Our team will publish the runbook after we have the final coverage list and the on-call response expectations.\n\nRegards,\nSam"
+  },
+  {
+    "message_id": "demo-017", "recipient_email": "alex@acme.example", "recipient_domain": "acme.example", "subject": "Data quality review", "timestamp": "2026-10-17T09:00:00Z", "thread_id": "demo-thread-17",
+    "raw_body": "Hi Alex,\n\nThe data quality review found a small set of duplicate records from the legacy import. The cleanup job is running now, and we will validate the totals with finance before enabling the new reporting schedule.\n\nBest,\nSam"
+  },
+  {
+    "message_id": "demo-018", "recipient_email": "drew@client.example", "recipient_domain": "client.example", "subject": "Launch communication", "timestamp": "2026-10-18T09:00:00Z", "thread_id": "demo-thread-18",
+    "raw_body": "Hey Drew,\n\nThe launch communication is ready for review. It explains the availability date, the new workflow, and where users can request help. Please send any edits today so communications can schedule the announcement.\n\nThanks,\nSam"
+  }
+]
