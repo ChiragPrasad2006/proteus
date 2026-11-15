@@ -208,6 +208,9 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Local-only email personalization state and OAuth tokens
+local_user_data/
+
 # PyPI configuration file
 .pypirc
 
@@ -218,3 +221,42 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# OAuth tokens and credentials
+oauth_tokens/
+client_secret*.json
+credentials.json
+
+# Model checkpoints and exports
+checkpoints/
+exported_models/
+
+# Model weights & other binary artifacts (never commit)
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.gguf
+*.onnx
+*.h5
+*.msgpack
+*.npz
+*.npy
+*.pkl
+*.pickle
+*.joblib
+
+# Datasets & vector stores (never commit)
+*.jsonl
+data/*.jsonl
+*.parquet
+*.arrow
+*.feather
+*.lance
+*.sqlite3
+*.sqlite
+*.db
+
+# IDEA
+IDEA.md
