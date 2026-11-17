@@ -275,3 +275,82 @@ class ApproveAndLearnResponse(StrictModel):
 
 # Imports needed for the new types
 from datetime import timezone
+
+
+# --- Multi-account, OAuth2 connect, contacts, and chat session schemas ---
+class GoogleAuthStartResponse(StrictModel):
+    """Authorization URL + state for the Google OAuth2 desktop flow."""
+
+    auth_url: str
+    state: str
+    redirect_uri: str
+
+
+class AccountSwitchRequest(StrictModel):
+    """Switch the active account."""
+
+    account_id: str
+
+
+class AccountListResponse(StrictModel):
+    """All connected accounts plus the currently active one."""
+
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    active_account_id: str | None = None
+
+
+class ContactResolution(StrictModel):
+    """Resolution of one free-text recipient name against the contacts registry."""
+
+    query: str
+    status: Literal["MATCHED", "NEEDS_CLARIFICATION"]
+    matched_email: str | None = None
+    matched_name: str | None = None
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    reason: str = ""
+
+
+class ChatTurnRequest(StrictModel):
+    """One natural-language turn in a chat session."""
+
+    account_id: str | None = None
+    session_id: str | None = None
+    user_message: str = Field(min_length=1)
+    auto_send: bool = False
+
+
+class ChatTurnResponse(StrictModel):
+    """Result of parsing, resolving, drafting, and gating a chat turn."""
+
+    session_id: str
+    status: Literal["DRAFTED", "PENDING_REVIEW", "SENT", "NEEDS_CLARIFICATION", "ERROR"]
+    assistant_message: str
+    parsed: dict[str, Any] = Field(default_factory=dict)
+    resolutions: dict[str, list[ContactResolution]] = Field(default_factory=dict)
+    draft_card: dict[str, Any] | None = None
+    review_reason: str | None = None
+
+
+class ChatSessionSummary(StrictModel):
+    """Lightweight chat session row."""
+
+    session_id: str
+    account_id: str
+    title: str = ""
+    created_at: str
+    updated_at: str
+    message_count: int = 0
+
+
+class ChatSessionListResponse(StrictModel):
+    sessions: list[ChatSessionSummary] = Field(default_factory=list)
+
+
+class ChatSessionCreateRequest(StrictModel):
+    title: str = ""
+
+
+class ChatSessionDetailResponse(StrictModel):
+    session: dict[str, Any]
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    draft_cards: list[dict[str, Any]] = Field(default_factory=list)

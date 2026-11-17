@@ -342,20 +342,27 @@ class QwenDrafter:
         if think:
             options["think"] = True
 
-        response = httpx.post(
-            endpoint,
-            json={
-                "model": model_name,
-                "messages": messages,
-                "stream": False,
-                "options": options,
-            },
-            timeout=180 if think else 120,
-        )
+        try:
+            response = httpx.post(
+                endpoint,
+                json={
+                    "model": model_name,
+                    "messages": messages,
+                    "stream": False,
+                    "options": options,
+                },
+                timeout=180 if think else 120,
+            )
+        except httpx.HTTPError as exc:
+            # Ollama not running / unreachable is a "no runtime" condition, not a crash.
+            raise DrafterUnavailable(f"Ollama unreachable at {endpoint}: {exc}") from exc
 
         if response.status_code == 404:
             raise DrafterUnavailable(f"Ollama model '{model_name}' not installed")
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise DrafterUnavailable(f"Ollama request for '{model_name}' failed: {exc}") from exc
 
         result = response.json()
         content = result.get("message", {}).get("content", "")

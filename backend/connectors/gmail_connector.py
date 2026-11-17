@@ -11,8 +11,25 @@ from typing import Any
 from backend.connectors.base import BaseEmailConnector, ConnectorError
 from backend.schemas import OutboundEmailRequest, RawSentEmail, SendReceipt
 
-_GMAIL_READONLY_SCOPE = ["https://www.googleapis.com/auth/gmail.readonly"]
-_GMAIL_SEND_SCOPE = ["https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.readonly"]
+# --- OAuth2 scope sets -----------------------------------------------------
+# Identity scopes let us read the connecting user's email, name, and avatar.
+GOOGLE_IDENTITY_SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+]
+GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+
+# Combined scope set requested by the desktop-loopback connect flow.
+GMAIL_ALL_SCOPES = GOOGLE_IDENTITY_SCOPES + [GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE]
+
+# Back-compat aliases retained for older call sites.
+_GMAIL_READONLY_SCOPE = [GMAIL_READONLY_SCOPE]
+_GMAIL_SEND_SCOPE = [GMAIL_SEND_SCOPE, GMAIL_READONLY_SCOPE]
+
+# OpenID Connect userinfo endpoint used to resolve the connecting account identity.
+USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userinfo"
 
 
 def _header(headers: list[dict[str, str]], name: str) -> str:
@@ -41,13 +58,98 @@ def _body_from_payload(payload: dict[str, Any]) -> str:
 
 
 class GmailConnector(BaseEmailConnector):
-    """Reads Gmail ``in:sent`` mail via Google's OAuth desktop loopback flow.
-    Sends mail via Gmail API with gmail.send scope.
+    """Reads Gmail ``in:sent`` mail and sends mail via Google's OAuth2 desktop flow.
+
+    The full scope set (``openid`` + ``userinfo`` + ``gmail.readonly`` + ``gmail.send``)
+    is requested so a single consent grants identity, extraction, and outbound send.
     """
 
-    def __init__(self, client_secrets_file: Path, token_file: Path) -> None:
-        self.client_secrets_file = client_secrets_file
-        self.token_file = token_file
+    def __init__(self, client_secrets_file: Path, token_file: Path, scopes: list[str] | None = None) -> None:
+        self.client_secrets_file = Path(client_secrets_file)
+        self.token_file = Path(token_file)
+        self.scopes = list(scopes) if scopes else list(GMAIL_ALL_SCOPES)
+
+    # --- OAuth2 desktop flow -------------------------------------------------
+    def create_flow(self, redirect_uri: str | None = None, scopes: list[str] | None = None):
+        """Build a google_auth_oauthlib Flow bound to the desktop client secrets file."""
+        try:
+            from google_auth_oauthlib.flow import Flow
+        except ImportError as exc:
+            raise ConnectorError(
+                "Gmail dependencies are missing; install google-auth-oauthlib and google-api-python-client."
+            ) from exc
+        if not self.client_secrets_file.exists():
+            raise ConnectorError(f"Gmail client secrets file not found at {self.client_secrets_file}.")
+        flow = Flow.from_client_secrets_file(
+            str(self.client_secrets_file),
+            scopes=scopes or self.scopes,
+            redirect_uri=redirect_uri,
+        )
+        # Enable PKCE when the installed google-auth-oauthlib supports it (required by
+        # Google for the "Desktop app" client type). Safe no-op on older versions.
+        try:
+            flow.autogenerate_code_verifier = True  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        return flow
+
+    def authorization_url(
+        self,
+        redirect_uri: str | None = None,
+        state: str | None = None,
+        scopes: list[str] | None = None,
+    ) -> tuple[Any, str, str]:
+        """Return ``(flow, authorization_url, state)`` for the consent redirect.
+
+        The caller must persist ``flow`` (or its PKCE verifier) until the callback
+        arrives so the authorization code can be exchanged with the matching verifier.
+        """
+        flow = self.create_flow(redirect_uri=redirect_uri, scopes=scopes)
+        url, returned_state = flow.authorization_url(
+            access_type="offline",
+            include_granted_scopes="true",
+            prompt="consent",
+            state=state,
+        )
+        return flow, url, returned_state
+
+    def exchange_code(self, flow, code: str, redirect_uri: str | None = None):
+        """Exchange an authorization code for credentials using the original flow object."""
+        if redirect_uri:
+            try:
+                flow.redirect_uri = redirect_uri
+            except Exception:
+                pass
+        try:
+            flow.fetch_token(code=code)
+        except Exception as exc:
+            raise ConnectorError(f"Failed to exchange Google authorization code: {exc}") from exc
+        return flow.credentials
+
+    def fetch_user_info(self, credentials) -> dict[str, Any]:
+        """Fetch the OpenID Connect userinfo payload for the connected account."""
+        import httpx
+
+        token = getattr(credentials, "token", None)
+        if not token:
+            raise ConnectorError("Credentials do not carry an access token; cannot fetch user info.")
+        try:
+            response = httpx.get(
+                USERINFO_ENDPOINT,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15.0,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as exc:
+            raise ConnectorError(f"Failed to fetch Google user info: {exc}") from exc
+
+    def save_credentials(self, credentials, token_file: Path | None = None) -> Path:
+        """Persist credentials to the token file for later refresh-based reuse."""
+        path = Path(token_file or self.token_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(credentials.to_json(), encoding="utf-8")
+        return path
 
     def _get_credentials(self, require_send: bool = False):
         """Get OAuth credentials, optionally requesting send scope."""
@@ -58,7 +160,8 @@ class GmailConnector(BaseEmailConnector):
         except ImportError as exc:
             raise ConnectorError("Gmail dependencies are missing; install google-auth-oauthlib and google-api-python-client.") from exc
 
-        scopes = _GMAIL_SEND_SCOPE if require_send else _GMAIL_READONLY_SCOPE
+        # Always request the full scope set so a single cached token can read and send.
+        scopes = self.scopes
         credentials = None
         if self.token_file.exists():
             credentials = Credentials.from_authorized_user_file(str(self.token_file), scopes)

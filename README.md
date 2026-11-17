@@ -1,255 +1,252 @@
-# Personalized AI Email Writer: Two-Stage Fine-Tuning Data Pipeline
+# Proteus — The Local-First AI Email Agent That Becomes You, Over Time
 
-A complete, production-grade, modular Python data engineering pipeline built with Hugging Face `datasets` for preparing training data for a **Two-Stage LLM Fine-Tuning Workflow** targeting **`Qwen/Qwen2.5-3B-Instruct`**:
-- **Stage 1: Supervised Fine-Tuning (SFT)** &rarr; Adopting detailed personas, custom style profiles, and writing email drafts from raw user intent bullet points.
-- **Stage 2: Direct Preference Optimization (DPO)** &rarr; Penalizing robotic AI clichés and corporate slop (*"I hope this email finds you well"*, *"delve"*, *"testament"*, *"tapestry"*, *"furthermore"*, *"in conclusion"*).
+> **Proteus** is a local-first, privacy-preserving AI email agent that learns your personal writing style, manages multiple email accounts, and autonomously drafts, replies, and sends emails on your behalf — all running entirely on your hardware.
 
 ---
 
-## 🏗️ Architecture & Pipeline Overview
+## 🏗️ Core Architecture Overview
 
-```
-                      ┌────────────────────────────────────────────────────────┐
-                      │                   Input Datasets                       │
-                      └───────┬──────────────────┬───────────────────┬─────────┘
-                              │                  │                   │
-                              ▼                  ▼                   ▼
-                     [ FinePersonas ]      [ PersonaHub ]      [ Capybara DPO ]
-                     (Synthetic Email)       ('persona')          (Binarized)
-                              │                  │                   │
-                              │                  │                   │
-┌─────────────────────────────┼──────────────────┼───────────────────┼──────────────────────────────┐
-│ Filters & Transformers      │                  │                   │                              │
-│                             ▼                  ▼                   ▼                              │
-│                      [Email Regex]      [Workplace Filter]  [Task Filter: Writing]                │
-│                      - Case-insensitive - Exclude NPCs      - Exclude code/math                   │
-│                      - Drop < 150 chars - Exclude fantasy   - Turn length <= 6                    │
-│                             │                  │                   │                              │
-│                             ▼                  ▼                   ▼                              │
-│                      [De-Slop Target]   [Async Synthesizer] [Anti-Slop Logic]                     │
-│                      - Strip buzzwords  - Scenarios         - Chosen: Clean only                  │
-│                      - Style Extract    - Intent Bullets    - Rejected: Penalize slop             │
-│                      - Intent Bullets   - Style Profile     - Slop Augment fallback               │
-└─────────────────────────────┬──────────────────┬───────────────────┬──────────────────────────────┘
-                              │                  │                   │
-                              ▼                  ▼                   │
-                     ┌──────────────────────────────────┐            │
-                     │ MinHash & Exact SHA-256 Dedupe   │            │
-                     └────────────────┬─────────────────┘            │
-                                      │                              │
-                                      ▼                              ▼
-                         [ Stage 1: SFT Dataset ]       [ Stage 2: DPO Dataset ]
-                         Standard HF Messages           TRL DPOTrainer Format
-                                      │                              │
-                                      ▼                              ▼
-                         data/sft_email_train.jsonl     data/dpo_email_train.jsonl
-                         data/sft_email_val.jsonl       data/dpo_email_val.jsonl
-```
+Proteus implements a **4-Tier Hybrid Personalization Stack** that progressively refines its understanding of you:
+
+### Tier 1 — Multi-Client Ingestion & Deterministic Stylometry
+- **Gmail OAuth2** (`gmail.readonly` + `gmail.send`) via Google APIs
+- **Outlook / Microsoft Graph** (`Mail.Read` + `Mail.Send`)
+- **IMAP/SMTP** generic connectors for any provider
+- **Local file ingestion** — `.mbox` and `.eml` drag-and-drop
+- **Strict per-account isolation** — every message tagged with `X-Account-ID` for zero cross-contamination
+- **Deterministic stylometry** — greeting, sign-off, sentence length, tone, vocabulary fingerprint extracted per account
+
+### Tier 2 — Audience-Tagged & Time-Decayed RAG
+- **CPU-hosted embeddings** — `sentence-transformers/all-MiniLM-L12-v2` (no GPU required for retrieval)
+- **LanceDB** vector store with on-disk persistence
+- **90-day half-life exponential recency decay** — recent emails weigh more, old context fades naturally
+- **Audience topology matching** — `1on1_private` / `group_cc` / `broadcast_bcc` tags ensure replies match the right social context
+
+### Tier 3 — Dual-Mode `Qwen3:8B` Engine (via Ollama)
+| Mode | `think` | Use Case |
+|------|---------|----------|
+| **Fast Drafting** | `false` | Sub-second email generation with `To`/`Cc`/`Bcc` Audience Topology prompting |
+| **Deep Reasoning** | `true` | Stylometry profiling, edit-diff analysis, multi-turn conversation synthesis |
+
+### Tier 4 — Autonomous Dispatch & Self-Improving Loop
+- **Natural-language persona resolution** — `"Email Manu and CC Jatin & Chiranth"` → resolves contacts, composes, queues
+- **First-recipient safety gate** — every new contact defaults to `PENDING_REVIEW` before send
+- **Atomic style rule extraction** — user edits to drafts are diffed and distilled into permanent style rules
+- **Continuous learning** — every sent email reinforces the personalization loop
 
 ---
 
-## 📦 Package Layout
-
-```
-Email-writer-2.5-3B/
-├── email_data_pipeline/
-│   ├── __init__.py
-│   ├── config.py              # Central pipeline configurations, regexes, and dataclasses
-│   ├── filters/
-│   │   ├── __init__.py
-│   │   ├── deslop.py          # AI buzzword regex detection and slop penalization
-│   │   ├── persona_filter.py  # Workplace persona classifier & fantasy/NPC exclusion
-│   │   └── text_cleaner.py    # Markdown/HTML cleaning, length checks, email keywords
-│   ├── deduplication/
-│   │   ├── __init__.py
-│   │   └── deduplicator.py    # Exact xxhash + 64-perm MinHash Jaccard deduplicator
-│   ├── synthesis/
-│   │   ├── __init__.py
-│   │   ├── scenarios.py       # Workplace scenario templates (salary negotiation, outages, etc.)
-│   │   ├── style_extractor.py # Deterministic tone, greeting, sign-off, sentence length extractor
-│   │   └── llm_synthesizer.py # Batched async LLM client (Ollama/vLLM/OpenAI) + offline generator
-│   ├── processors/
-│   │   ├── __init__.py
-│   │   ├── base.py            # Base processor abstract class
-│   │   ├── dataset_a.py       # FinePersonas email conversation processor
-│   │   ├── dataset_b.py       # PersonaHub workplace synthesizer
-│   │   └── dataset_c.py       # Capybara DPO processor with anti-slop pair logic
-│   ├── metrics/
-│   │   ├── __init__.py
-│   │   └── reporter.py        # Token distribution analyzer (Qwen2.5) & Rich summary reporter
-│   └── pipeline.py            # Orchestrator with streaming, batching, and train/val splits
-├── pipeline.py                # Top-level CLI entry point
-├── requirements.txt           # Dependencies
-└── data/                      # Output JSONL datasets
-    ├── sft_email_train.jsonl
-    ├── sft_email_val.jsonl
-    ├── dpo_email_train.jsonl
-    └── dpo_email_val.jsonl
-```
+## 🎨 Frontend Studio (`frontend/`)
+**Digital Naturalism & Brutalist Editorial UI**
+- **Palette**: `#0C0A09` Stone Black, `#1C1917` Warm Charcoal, `#D4F268` Acid Lime
+- **Typography**: `Newsreader` (editorial headlines) + `Instrument Sans` (UI)
+- **1-click Google Sign-In onboarding** — OAuth flow completes in-browser
+- **Multi-account LLM chat workspace** — chat with your email brain, switch accounts instantly
+- **Real-time draft preview** — see the email as the model generates it
 
 ---
 
-## 💾 Memory Efficiency (16GB RAM Constraints)
+## 🚀 Quickstart
 
-To run cleanly on local developer machines with 16GB RAM:
-1. **Streaming Execution (`streaming=True`)**: Shards are fetched incrementally from Hugging Face Hub using PyArrow / Parquet streams. Datasets never reside entirely in RAM.
-2. **Batched Processing (`.map(..., batched=True)`)**: Processing and async LLM synthesis operate in chunks of 100–250 rows.
-3. **Buffered JSONL Writer**: Memory-buffered file writers with periodic `.flush()` prevent object accumulation in memory.
-4. **Lightweight Deduplication**: Uses 64-bit integer hashes for exact deduplication and a fixed-window MinHash ring buffer, keeping memory footprint below **60MB**.
-5. **Garbage Collection**: Explicit `gc.collect()` calls between pipeline stages.
+### Option A: One-Click Launcher (Windows)
+```powershell
+# Clone the repo
+git clone https://github.com/ChiragPrasad2006/proteus.git
+cd proteus
+
+# Double-click or run:
+.\start_proteus.bat
+```
+The launcher will:
+1. ✅ Set `HF_HOME=D:\huggingface_cache` and `EMAIL_WRITER_LOCAL_DATA_DIR=./local_user_data`
+2. ✅ Start Ollama (if not running) and pull `qwen3:8b`
+3. ✅ Launch FastAPI backend on `http://127.0.0.1:8000`
+4. ✅ Launch Vite frontend on `http://localhost:5173` and open your browser
+
+> **Stop everything**: `.\stop_proteus.bat`
 
 ---
 
-## 📋 Target Output Schemas
+### Option B: Manual Terminal Commands
 
-### Output File 1: SFT (`data/sft_email_train.jsonl` & `val.jsonl`)
-Standard Hugging Face ChatML messages schema:
+#### Prerequisites
+- **Ollama** installed and `qwen3:8b` pulled: `ollama pull qwen3:8b`
+- **Python 3.10+** with venv at `D:\MLops\.venv` (or update `start_proteus.bat`)
+- **Node.js 18+** and `npm`
+- **Google Cloud Console** project with Gmail API enabled (for Gmail OAuth)
+
+#### Terminal 1 — Ollama
+```powershell
+ollama serve
+# In another terminal:
+ollama pull qwen3:8b
+```
+
+#### Terminal 2 — FastAPI Backend
+```powershell
+cd proteus
+$env:HF_HOME = "D:\huggingface_cache"
+$env:EMAIL_WRITER_LOCAL_DATA_DIR = "$PWD\local_user_data"
+D:\MLops\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+```
+Verify: `curl http://127.0.0.1:8000/api/health` → `{"status":"ok"}`
+
+#### Terminal 3 — Vite Frontend
+```powershell
+cd proteus\frontend
+npm install        # first time only
+npm run dev
+```
+Open `http://localhost:5173` in your browser.
+
+---
+
+## 🔐 Google OAuth Setup (Gmail Integration)
+
+1. Go to **Google Cloud Console** → **APIs & Services** → **Credentials**
+2. Create **OAuth 2.0 Client ID** → **Web application**
+3. **Authorized redirect URIs**: `http://localhost:8000/auth/google/callback`
+4. Download `client_secret.json` → place in `proteus/` root (auto-gitignored)
+5. In the Proteus UI: **Settings → Accounts → Add Gmail Account** → follow OAuth flow
+
+> **Scopes requested**: `https://www.googleapis.com/auth/gmail.readonly`, `https://www.googleapis.com/auth/gmail.send`, `https://www.googleapis.com/auth/userinfo.email`, `openid`
+
+---
+
+## 📡 REST API Reference
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `GET` | `/api/health` | Health check | None |
+| `GET` | `/api/accounts` | List connected email accounts | Cookie/Token |
+| `POST` | `/api/accounts/gmail` | Initiate Gmail OAuth flow | Cookie/Token |
+| `GET` | `/api/accounts/gmail/callback` | OAuth callback (auto) | None |
+| `DELETE` | `/api/accounts/{account_id}` | Disconnect account | Cookie/Token |
+| `GET` | `/api/emails` | List emails (paginated, filterable) | Cookie/Token |
+| `POST` | `/api/emails/sync` | Trigger full sync for account | Cookie/Token |
+| `POST` | `/api/draft` | Generate draft from intent + context | Cookie/Token |
+| `POST` | `/api/draft/refine` | Refine draft with user feedback | Cookie/Token |
+| `POST` | `/api/send` | Send email (respects PENDING_REVIEW gate) | Cookie/Token |
+| `GET` | `/api/style/profile` | Get learned style profile for account | Cookie/Token |
+| `POST` | `/api/style/learn` | Extract style rules from edit diff | Cookie/Token |
+| `WS` | `/ws/chat` | Multi-account LLM chat workspace | Cookie/Token |
+
+### Draft Generation Payload
 ```json
+POST /api/draft
 {
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are a personalized email writer. Adopt this persona and style:\nPersona: A senior engineering director managing distributed infrastructure teams.\nStyle Profile: Tone: Executive, Decisive & Concise | Greeting: Direct (No Salutation) | Sign-off: Concise ('Best') | Sentence Structure: Short & Punchy (~11 words/sentence)"
-    },
-    {
-      "role": "user",
-      "content": "Draft an email covering these points:\n- Outline proposed $45k compute allocation for local LLM fine-tuning.\n- Contrast internal model ROI against recurring proprietary API costs (projected 4.2x savings).\n- Request sign-off ahead of the Q1 procurement cutoff."
-    },
-    {
-      "role": "assistant",
-      "content": "Team,\n\nFollowing up on our infrastructure budget planning for Q1. We are requesting approval for a $45,000 compute allocation for self-hosted LLM fine-tuning.\n\nMigrating our high-volume workflows from third-party APIs to an in-house model will deliver approximately 4.2x savings over the next twelve months based on current query telemetry.\n\nPlease review and provide procurement sign-off by Thursday at 3 PM.\n\nBest,\nMarcus"
-    }
-  ]
+  "account_id": "gmail_primary",
+  "intent": "Follow up on Q1 budget approval, request sign-off by Friday",
+  "audience": "1on1_private",
+  "to": ["manu@example.com"],
+  "cc": ["jatin@example.com"],
+  "bcc": [],
+  "thread_id": "optional_thread_id_for_reply",
+  "think_mode": false
 }
 ```
 
-### Output File 2: DPO (`data/dpo_email_train.jsonl` & `val.jsonl`)
-TRL `DPOTrainer` schema:
+### Send Payload (with safety gate)
 ```json
+POST /api/send
 {
-  "prompt": "<|im_start|>user\nCould you review this project update memo before we send it to stakeholders?<|im_end|>\n<|im_start|>assistant\n",
-  "chosen": "Here is a refined version that cuts unnecessary jargon, clarifies the delivery date, and highlights the key technical deliverables...",
-  "rejected": "Dear Colleague,\n\nI hope this email finds you well in today's fast-paced corporate landscape.\n\nFurthermore, as we delve into the multifaceted dimensions of this initiative, it is important to remember that our collaboration stands as a profound testament to innovation within our organizational tapestry.\n\nIn conclusion, navigating this landscape will seamlessly foster synergy across all key verticals.\n\nBest regards,\nAutomated System"
+  "draft_id": "uuid",
+  "confirm_send": true,
+  "bypass_review": false
 }
 ```
+- If recipient is **new** (no prior sent email), `bypass_review=false` → status = `PENDING_REVIEW`
+- Review in UI → **Approve** → actually sends
 
 ---
 
-## 🚀 Quickstart & Usage
+## 🧪 Testing
 
-### 1. Environment Setup
 ```powershell
-# install dependencies
-pip install -r requirements.txt
-```
+# Backend tests (pytest)
+cd proteus
+D:\MLops\.venv\Scripts\python.exe -m pytest tests/ -q
 
-### 2. Run with Local Ollama / vLLM Server (Live Synthesis)
-Ensure Ollama or vLLM is running locally:
-```powershell
-# In terminal 1 (start Ollama):
-ollama run qwen2.5:3b
-
-# In terminal 2 (run pipeline):
-python pipeline.py --llm-base-url http://localhost:11434/v1 --llm-model qwen2.5:3b --max-samples-a 5000 --max-samples-b 3000 --max-samples-c 4000
-```
-
-### 3. Run in Offline / Deterministic Synthesis Mode
-If no local LLM server is running, use `--offline-synthesis` for instant, deterministic generation:
-```powershell
-python pipeline.py --offline-synthesis --max-samples-a 5000 --max-samples-b 3000 --max-samples-c 4000
-```
-
-### 4. Fast Verification Dry Run
-```powershell
-python pipeline.py --max-samples-a 50 --max-samples-b 50 --max-samples-c 50 --offline-synthesis
+# Frontend type-check & build
+cd proteus\frontend
+npm run lint
+npm run build
 ```
 
 ---
 
-## 📊 Summary Report Example
-Before saving datasets to disk, the pipeline computes and prints exact token length distributions using the target `Qwen/Qwen2.5-3B-Instruct` tokenizer:
+## 📁 Project Structure
 
 ```
-+-----------------------------------------------------------------------------+
-| Two-Stage LLM Fine-Tuning Dataset Pipeline Summary Report                   |
-| Target Model: Qwen/Qwen2.5-3B-Instruct (ChatML) | Split: Train / Validation |
-+-----------------------------------------------------------------------------+
-         Stage 1: SFT Dataset (data/sft_email_train.jsonl & val.jsonl)         
-+-----------------------------------------------------------------------------+
-| Split        | Rows | Field              | Min | Max |  Mean | Median | P95 |
-|--------------+------+--------------------+-----+-----+-------+--------+-----|
-| Train        | 4500 | Prompt (Sys+User)  | 110 | 185 | 145.2 |    144 | 172 |
-|              |      | Assistant (Email)  |  65 | 450 | 170.1 |    162 | 335 |
-|              |      | Total Sequence     | 185 | 620 | 318.4 |    310 | 505 |
-|--------------+------+--------------------+-----+-----+-------+--------+-----|
-| Validation   |  500 | Total Sequence     | 190 | 590 | 312.0 |    305 | 495 |
-+-----------------------------------------------------------------------------+
+proteus/
+├── start_proteus.bat          # One-click Windows launcher
+├── stop_proteus.bat           # Stop all services
+├── .gitignore                 # Hardened: no secrets, no binaries, no caches
+├── README.md                  # This file
+├── LICENSE
+├── requirements.txt           # Python dependencies
+├── backend/
+│   ├── main.py                # FastAPI app entry
+│   ├── config.py              # Central config (env-driven)
+│   ├── automation/            # Tier 4: dispatch, style learning
+│   ├── connectors/            # Tier 1: Gmail, Outlook, IMAP, MBOX
+│   ├── generation/            # Tier 3: Qwen3:8B drafter (think=true/false)
+│   ├── processing/            # Tier 1: cleaner, stylometry
+│   ├── profiler/              # Tier 3: deep reasoning profiler
+│   ├── retrieval/             # Tier 2: embedder, LanceDB vector store
+│   ├── schemas.py             # Pydantic models (API contracts)
+│   └── storage/               # Profile store, chat sessions, account manager
+├── frontend/                  # Vite + React + TypeScript + Tailwind
+│   ├── src/
+│   ├── package.json
+│   └── vite.config.ts
+├── tests/
+│   ├── test_proteus_accounts.py
+│   ├── test_proteus_chat.py
+│   └── test_security_audit.py
+├── local_user_data/           # GITIGNORED — per-account SQLite, tokens, style DB
+├── oauth_tokens/              # GITIGNORED — OAuth refresh tokens
+├── checkpoints/               # GITIGNORED — LoRA adapters, model checkpoints
+└── exported_models/           # GITIGNORED — merged GGUF/ONNX exports
 ```
 
 ---
 
-## 🎯 Fine-Tuning with TRL
+## ⚙️ Configuration (Environment Variables)
 
-### Stage 1: SFT with `SFTTrainer`
-```python
-from datasets import load_dataset
-from trl import SFTTrainer, SFTConfig
-from transformers import AutoModelForCausalLM, AutoTokenizer
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HF_HOME` | `~/.cache/huggingface` | Hugging Face cache (set to `D:\huggingface_cache` in launcher) |
+| `EMAIL_WRITER_LOCAL_DATA_DIR` | `./local_user_data` | Per-account databases, tokens, style profiles |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
+| `OLLAMA_MODEL` | `qwen3:8b` | Model tag for drafting/profiling |
+| `BACKEND_HOST` | `127.0.0.1` | FastAPI bind address |
+| `BACKEND_PORT` | `8000` | FastAPI port |
+| `FRONTEND_PORT` | `5173` | Vite dev server port |
+| `LANCEDB_PATH` | `$EMAIL_WRITER_LOCAL_DATA_DIR/lancedb` | Vector store location |
+| `SQLITE_PATH` | `$EMAIL_WRITER_LOCAL_DATA_DIR/proteus.sqlite3` | Relational store |
 
-model_id = "Qwen/Qwen2.5-3B-Instruct"
-tokenizer = AutoTokenizer.from_pretrained(model_id)
-model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="bfloat16", device_map="auto")
+---
 
-dataset = load_dataset("json", data_files={"train": "data/sft_email_train.jsonl", "validation": "data/sft_email_val.jsonl"})
+## 🛡️ Security & Privacy
 
-training_args = SFTConfig(
-    output_dir="./qwen2.5-email-sft",
-    max_seq_length=1024,
-    per_device_train_batch_size=4,
-    gradient_accumulation_steps=4,
-    learning_rate=2e-5,
-    bf16=True,
-    num_train_epochs=3,
-    logging_steps=10,
-)
+- **100% local execution** — no data leaves your machine unless you explicitly send an email
+- **OAuth tokens encrypted at rest** — stored in `local_user_data/` with per-account isolation
+- **No telemetry, no analytics, no external logging**
+- **Gitignore hardened** — `client_secret*.json`, `credentials.json`, `*.sqlite3`, `*.db`, `checkpoints/`, `exported_models/`, `local_user_data/`, `oauth_tokens/`, `frontend/node_modules/`, `frontend/dist/` all excluded
+- **Security audit test** — `tests/test_security_audit.py` validates zero secrets in tracked files
 
-trainer = SFTTrainer(
-    model=model,
-    train_dataset=dataset["train"],
-    eval_dataset=dataset["validation"],
-    args=training_args,
-)
-trainer.train()
-```
+---
 
-### Stage 2: DPO with `DPOTrainer`
-```python
-from datasets import load_dataset
-from trl import DPOTrainer, DPOConfig
-from transformers import AutoModelForCausalLM, AutoTokenizer
+## 📄 License
 
-sft_model_path = "./qwen2.5-email-sft"
-model = AutoModelForCausalLM.from_pretrained(sft_model_path, torch_dtype="bfloat16", device_map="auto")
-tokenizer = AutoTokenizer.from_pretrained(sft_model_path)
+MIT License — see [LICENSE](LICENSE) for details.
 
-dataset = load_dataset("json", data_files={"train": "data/dpo_email_train.jsonl", "validation": "data/dpo_email_val.jsonl"})
+---
 
-dpo_args = DPOConfig(
-    output_dir="./qwen2.5-email-dpo",
-    beta=0.1,
-    learning_rate=5e-7,
-    per_device_train_batch_size=2,
-    gradient_accumulation_steps=8,
-    bf16=True,
-    num_train_epochs=1,
-)
+## 🙏 Acknowledgments
 
-dpo_trainer = DPOTrainer(
-    model=model,
-    train_dataset=dataset["train"],
-    eval_dataset=dataset["validation"],
-    tokenizer=tokenizer,
-    args=dpo_args,
-)
-dpo_trainer.train()
-```
+- **Qwen Team** — `Qwen3:8B` via Ollama
+- **LanceDB** — embedded vector database
+- **Sentence Transformers** — `all-MiniLM-L12-v2` embeddings
+- **FastAPI + Vite + React + Tailwind** — the stack that makes it feel native

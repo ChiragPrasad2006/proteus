@@ -1,0 +1,188 @@
+/**
+ * Shared domain types for the Proteus front end. These mirror the FastAPI
+ * schemas exposed by `backend/schemas.py` where a wire contract exists.
+ */
+
+export type Provider = 'gmail' | 'outlook' | 'imap' | 'mbox' | 'demo'
+
+export type RelationshipTier =
+  | 'executive_or_client'
+  | 'peer'
+  | 'direct_report'
+  | 'external'
+  | 'unknown'
+
+export type AudienceMode = '1on1_private' | 'group_cc' | 'broadcast_bcc'
+
+export interface Account {
+  id: string
+  name: string
+  email: string
+  provider: Provider
+  /** Two-letter monogram rendered inside the avatar disc. */
+  initials: string
+  /** Tailwind gradient token used for the avatar background. */
+  hue: string
+}
+
+export interface Session {
+  id: string
+  title: string
+  preview: string
+  /** ISO-8601 timestamp of the last activity. */
+  updatedAt: string
+  accountId: string
+}
+
+export interface RecipientContact {
+  id: string
+  name: string
+  email: string
+  tier: RelationshipTier
+  /** Human label for the tier, e.g. "Executive / Client". */
+  relationship: string
+  /** 0–1 confidence that the tier inference is correct. */
+  confidence: number
+  /** Number of prior sent emails matched in the local corpus. */
+  sentCount: number
+  isNew?: boolean
+}
+
+export interface RetrievedExample {
+  message_id: string
+  recipient_email: string
+  subject: string
+  clean_body: string
+  greeting: string
+  signoff: string
+  word_count: number
+  timestamp: string
+}
+
+export type DraftStatus = 'DRAFT' | 'PENDING_REVIEW' | 'SENT' | 'FAILED'
+
+export type WarningSeverity = 'info' | 'warning' | 'danger'
+
+export interface DraftWarning {
+  id: string
+  severity: WarningSeverity
+  title: string
+  detail: string
+}
+
+export interface EmailDraft {
+  id: string
+  to: string[]
+  cc: string[]
+  bcc: string[]
+  subject: string
+  body: string
+  warnings: DraftWarning[]
+  retrievedExamples: RetrievedExample[]
+  modelUsed: string
+  status: DraftStatus
+  reviewReason?: string
+}
+
+export type MessageRole = 'user' | 'assistant'
+
+/**
+ * Assistant-only: emitted when the agent cannot confidently resolve a name
+ * from the local corpus and needs the user to disambiguate before drafting.
+ */
+export interface ClarificationRequest {
+  /** The question shown above the candidate list, e.g. "Which Chiranth?". */
+  prompt: string
+  /** Ranked candidate contacts the agent matched the name against. */
+  candidates: RecipientContact[]
+}
+
+export interface ChatMessage {
+  id: string
+  role: MessageRole
+  content: string
+  /** ISO-8601 creation time. */
+  createdAt: string
+  status?: 'pending' | 'streaming' | 'done' | 'NEEDS_CLARIFICATION'
+  /** Assistant-only: the short plan the agent narrates before drafting. */
+  reasoning?: string[]
+  /** Assistant-only: contacts resolved from the local corpus. */
+  contacts?: RecipientContact[]
+  /** Assistant-only: an interactive draft awaiting first-recipient review. */
+  draft?: EmailDraft | null
+  /** Assistant-only: a name the agent needs the user to disambiguate. */
+  clarification?: ClarificationRequest | null
+}
+
+/* ── Backend wire contracts (subset of backend/schemas.py) ─────────────── */
+
+export interface ContactResolution {
+  query: string
+  status: 'MATCHED' | 'NEEDS_CLARIFICATION'
+  matched_email: string | null
+  matched_name: string | null
+  candidates: { email: string; full_name: string; first_name?: string }[]
+  reason: string | null
+}
+
+export interface OnboardingStatus {
+  provider: string
+  extracted_emails: number
+  clean_emails_retained: number
+  dropped_emails: number
+  storage_path: string
+}
+
+export interface StylometryMetrics {
+  top_greetings: { pattern: string; pct: number }[]
+  exact_signoff: string
+  avg_sentence_length_words: number
+  avg_email_length_words: number
+  avg_paragraph_count: number
+  exclamation_rate: number
+  emoji_rate: number
+  uses_bullet_lists_pct: number
+}
+
+export interface GlobalStyleCard {
+  formality: 'casual' | 'semi-formal' | 'strict-executive' | 'blunt-technical'
+  tone: string
+  directness: 'low' | 'balanced' | 'high'
+  vocabulary_level: 'simple' | 'standard-professional' | 'advanced-technical'
+  sentence_structure: 'short & punchy' | 'detailed & analytical' | 'warm & conversational'
+  formatting_preferences: string[]
+  characteristic_phrases: string[]
+  source: 'ollama' | 'transformers' | 'llama_cpp' | 'heuristic'
+  model: string
+  sampled_email_count: number
+}
+
+export interface UserStyleProfile {
+  profile_id: string
+  created_at: string
+  deterministic_stylometry: StylometryMetrics
+  global_style_card: GlobalStyleCard
+  corpus_statistics: {
+    total_sent_emails: number
+    clean_emails_retained: number
+    top_recipients: Record<string, unknown>[]
+  }
+  global_learned_rules: string[]
+}
+
+export interface RuntimeStatus {
+  label: string
+  state: 'online' | 'offline' | 'loading'
+  detail?: string
+}
+
+export interface HealthReport {
+  status: string
+  qwen: { available: boolean; model?: string; detail?: string }
+  gpu: { available: boolean; name?: string; vram_total_mib?: number; vram_free_mib?: number }
+  sentence_transformer: { model: string; cache_ready: boolean; cache_dir: string }
+  local_user_data_dir: string
+  retrieval: { embedder_loaded: boolean; embedder_cached: boolean; vector_store_count: number }
+  generation: { available: boolean; model?: string; detail?: string }
+  automation: { dispatcher_ready: boolean; style_learner_ready: boolean }
+}
