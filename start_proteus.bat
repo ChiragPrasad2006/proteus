@@ -110,7 +110,7 @@ if not exist "%VENV_PYTHON%" (
 )
 
 echo [BACKEND] Launching uvicorn on http://%BACKEND_HOST%:%BACKEND_PORT%...
-start "Proteus - FastAPI Backend" cmd /k "%VENV_PYTHON% -m uvicorn %BACKEND_MODULE% --host %BACKEND_HOST% --port %BACKEND_PORT%"
+start "Proteus - FastAPI Backend" cmd /k "\"%VENV_PYTHON%\" -m uvicorn %BACKEND_MODULE% --host %BACKEND_HOST% --port %BACKEND_PORT%"
 
 echo [BACKEND] Waiting for health endpoint %HEALTH_ENDPOINT%...
 set "BACKEND_READY=0"
@@ -165,10 +165,12 @@ if not exist "%FRONTEND_DIR%\node_modules" (
 )
 
 echo [FRONTEND] Launching Vite dev server on http://localhost:%FRONTEND_PORT%...
-start "Proteus - Frontend UI" cmd /k "cd /d %FRONTEND_DIR% && npm run dev"
+:: Use a separate batch file to avoid quoting issues with && in cmd /k
+echo @echo off ^&^& cd /d "%FRONTEND_DIR%" ^&^& npm run dev > "%~dp0\frontend_launcher.bat"
+start "Proteus - Frontend UI" cmd /k "%~dp0\frontend_launcher.bat"
 
 echo [FRONTEND] Waiting for Vite to compile...
-timeout /t 3 /nobreak >nul
+timeout /t 5 /nobreak >nul
 
 echo [FRONTEND] Opening browser at http://localhost:%FRONTEND_PORT%...
 start "" "http://localhost:%FRONTEND_PORT%"
