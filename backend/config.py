@@ -40,7 +40,7 @@ class Settings:
         default_factory=lambda: os.getenv("EMAIL_WRITER_OLLAMA_URL", "http://127.0.0.1:11434")
     )
     # Upgraded to qwen3:8b as default model
-    model_name: str = field(default_factory=lambda: os.getenv("EMAIL_WRITER_MODEL_NAME", "email-writer"))
+    model_name: str = field(default_factory=lambda: os.getenv("EMAIL_WRITER_MODEL_NAME", "qwen3:8b"))
     ollama_fallback_model: str = field(
         default_factory=lambda: os.getenv("EMAIL_WRITER_OLLAMA_FALLBACK_MODEL", "qwen3:8b")
     )
@@ -83,11 +83,11 @@ class Settings:
     )
     google_oauth_redirect_uri: str = field(
         default_factory=lambda: os.getenv(
-            "GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:8080/api/auth/google/callback"
+            "GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback"
         )
     )
     google_oauth_port: int = field(
-        default_factory=lambda: int(os.getenv("GOOGLE_OAUTH_PORT", "8080"))
+        default_factory=lambda: int(os.getenv("GOOGLE_OAUTH_PORT", "8000"))
     )
 
     # Frontend URL for redirects after the OAuth callback

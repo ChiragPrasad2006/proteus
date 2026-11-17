@@ -87,7 +87,7 @@ class QwenStyleProfiler:
         ollama_models: list[str] = []
         ollama_error = ""
         try:
-            response = httpx.get(f"{self.settings.ollama_url.rstrip('/')}/api/tags", timeout=1.5)
+            response = httpx.get(f"{self.settings.ollama_url.rstrip('/')}/api/tags", timeout=5.0)
             response.raise_for_status()
             ollama_models = [item.get("name", "") for item in response.json().get("models", [])]
         except Exception as exc:  # Health checks should not make the API unavailable.

@@ -93,6 +93,10 @@ if %errorlevel% neq 0 (
     echo [OLLAMA] Model %OLLAMA_MODEL% is already available.
 )
 
+:: Extra wait for Ollama to fully load the model into memory
+echo [OLLAMA] Waiting for model to be fully loaded...
+timeout /t 5 /nobreak >nul
+
 :: ----------------------------------------------------------------------------
 :: Step 3: Start FastAPI Backend
 :: ----------------------------------------------------------------------------
@@ -114,24 +118,28 @@ start "Proteus - FastAPI Backend" cmd /k "\"%VENV_PYTHON%\" -m uvicorn %BACKEND_
 
 echo [BACKEND] Waiting for health endpoint %HEALTH_ENDPOINT%...
 set "BACKEND_READY=0"
-for /l %%i in (1,1,30) do (
-    curl -s -f --max-time 2 "%HEALTH_ENDPOINT%" >nul 2>&1
+for /l %%i in (1,1,45) do (
+    curl -s -f --max-time 5 "%HEALTH_ENDPOINT%" >nul 2>&1
     if !errorlevel! equ 0 (
-        set "BACKEND_READY=1"
-        goto :backend_ready
+        :: Check if model is available in health response
+        curl -s -f --max-time 5 "%HEALTH_ENDPOINT%" | findstr /c:"\"preferred_ollama_model_available\":true" >nul 2>&1
+        if !errorlevel! equ 0 (
+            set "BACKEND_READY=1"
+            goto :backend_ready
+        )
     )
-    echo [BACKEND] Waiting... (%%i/30)
-    timeout /t 2 /nobreak >nul
+    echo [BACKEND] Waiting... (%%i/45)
+    timeout /t 3 /nobreak >nul
 )
 :backend_ready
 if "%BACKEND_READY%" neq "1" (
     echo.
-    echo [ERROR] FastAPI backend failed to start within 60 seconds.
+    echo [ERROR] FastAPI backend failed to start or model not loaded within 135 seconds.
     echo [ERROR] Check the 'Proteus - FastAPI Backend' window for errors.
     pause
     exit /b 1
 )
-echo [BACKEND] Backend is healthy at %HEALTH_ENDPOINT%
+echo [BACKEND] Backend is healthy at %HEALTH_ENDPOINT% with model loaded.
 
 :: ----------------------------------------------------------------------------
 :: Step 4: Start Vite Frontend & Open Browser
