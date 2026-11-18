@@ -272,5 +272,9 @@ frontend/build/
 frontend/.vite/
 frontend_launcher.bat
 
+# Obsolete batch launchers (replaced by Proteus.exe)
+start_proteus.bat
+stop_proteus.bat
+
 # IDEA
 IDEA.md

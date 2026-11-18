@@ -68,16 +68,7 @@ The launcher will:
 
 ---
 
-### Option B: Legacy Batch Launcher (Windows)
-```powershell
-# Double-click or run:
-.\start_proteus.bat
-```
-> **Stop everything**: `.\stop_proteus.bat`
-
----
-
-### Option C: Manual Terminal Commands
+### Option B: Manual Terminal Commands
 
 #### Prerequisites
 - **Ollama** installed and `qwen3:8b` pulled: `ollama pull qwen3:8b`
@@ -195,8 +186,6 @@ npm run build
 ```
 proteus/
 ├── Proteus.exe                 # Standalone Windows launcher (~6 MB)
-├── start_proteus.bat           # Legacy batch launcher
-├── stop_proteus.bat            # Stop all services
 ├── launcher.py                 # Source for Proteus.exe
 ├── .gitignore                  # Hardened: no secrets, no binaries, no caches
 ├── README.md                   # This file

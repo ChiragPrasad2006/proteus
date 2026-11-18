@@ -24,12 +24,21 @@ from pathlib import Path
 from typing import Optional
 
 # Configuration
-REPO_ROOT = Path(__file__).resolve().parent
+# When frozen by PyInstaller (--onefile), __file__ points into the temporary
+# _MEI extraction directory, which is wiped on exit. The real application root
+# is the directory containing the frozen executable (sys.executable).
+if getattr(sys, "frozen", False):
+    APP_ROOT = Path(sys.executable).resolve().parent
+else:
+    APP_ROOT = Path(__file__).resolve().parent
+
 VENV_PYTHON = Path(r"D:\MLops\.venv\Scripts\python.exe")
+# Use full path to npm to avoid PATH issues in frozen executable
+NPM_CMD = Path(r"C:\Program Files\nodejs\npm.cmd")
 BACKEND_MODULE = "backend.main:app"
 BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = 8000
-FRONTEND_DIR = REPO_ROOT / "frontend"
+FRONTEND_DIR = APP_ROOT / "frontend"
 FRONTEND_PORT = 5173
 OLLAMA_URL = "http://127.0.0.1:11434"
 OLLAMA_MODEL = "qwen3:8b"
@@ -93,7 +102,7 @@ def setup_environment() -> None:
         log("D:\\ drive not found, using default HF cache location")
 
     # Local data directory
-    local_data_dir = REPO_ROOT / "local_user_data"
+    local_data_dir = APP_ROOT / "local_user_data"
     local_data_dir.mkdir(parents=True, exist_ok=True)
     os.environ["EMAIL_WRITER_LOCAL_DATA_DIR"] = str(local_data_dir)
     log(f"EMAIL_WRITER_LOCAL_DATA_DIR set to {local_data_dir}")
@@ -179,11 +188,25 @@ def start_backend() -> bool:
         log("Please verify the virtual environment path")
         return False
 
+    # Verify the backend package actually lives under the resolved app root.
+    # In a frozen build APP_ROOT is the executable's directory; if backend/
+    # is missing there, uvicorn cannot import "backend.main:app".
+    backend_dir = APP_ROOT / "backend"
+    if not backend_dir.is_dir():
+        log(f"ERROR: Backend directory not found at {backend_dir}")
+        log(f"Application root resolved to: {APP_ROOT}")
+        log("Expected the 'backend' package to be alongside the executable")
+        return False
+
+    # Make sure the backend package is importable by uvicorn regardless of cwd.
+    backend_env = os.environ.copy()
+    backend_env["PYTHONPATH"] = str(APP_ROOT)
+
     # Start uvicorn
     backend_process = run_cmd([
         str(VENV_PYTHON), "-m", "uvicorn", BACKEND_MODULE,
         "--host", BACKEND_HOST, "--port", str(BACKEND_PORT)
-    ], cwd=REPO_ROOT)
+    ], cwd=APP_ROOT, env=backend_env)
 
     # Wait for health endpoint with model check
     success, data = wait_for_url(HEALTH_ENDPOINT, max_wait=120, interval=3.0, check_json=True)
@@ -234,19 +257,19 @@ def run_npm_build() -> bool:
     if not (FRONTEND_DIR / "package.json").exists():
         log("ERROR: Frontend package.json not found")
         return False
-    
+
     log("Running npm install...")
-    result = subprocess.run(["npm", "install"], cwd=FRONTEND_DIR, capture_output=True, text=True, timeout=120)
+    result = subprocess.run([str(NPM_CMD), "install"], cwd=FRONTEND_DIR, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         log(f"ERROR: npm install failed: {result.stderr}")
         return False
-    
+
     log("Running npm run build...")
-    result = subprocess.run(["npm", "run", "build"], cwd=FRONTEND_DIR, capture_output=True, text=True, timeout=120)
+    result = subprocess.run([str(NPM_CMD), "run", "build"], cwd=FRONTEND_DIR, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         log(f"ERROR: npm run build failed: {result.stderr}")
         return False
-    
+
     log("Frontend built successfully")
     return True
 
@@ -254,23 +277,23 @@ def run_npm_build() -> bool:
 def serve_frontend() -> bool:
     """Serve frontend via Vite dev server (for development) or static files."""
     global frontend_process
-    
+
     log("=" * 60)
     log("[3/4] Starting Proteus UI...")
     log("=" * 60)
-    
+
     # For now, use Vite dev server (easier for development)
     # In production, we'd serve dist/ via FastAPI static files
     if not (FRONTEND_DIR / "node_modules").exists():
         log("node_modules not found. Running npm install...")
-        result = subprocess.run(["npm", "install"], cwd=FRONTEND_DIR, capture_output=True, text=True, timeout=120)
+        result = subprocess.run([str(NPM_CMD), "install"], cwd=FRONTEND_DIR, capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
             log(f"ERROR: npm install failed: {result.stderr}")
             return False
-    
+
     log("Starting Vite dev server...")
     frontend_process = run_cmd(
-        ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", str(FRONTEND_PORT)],
+        [str(NPM_CMD), "run", "dev", "--", "--host", "0.0.0.0", "--port", str(FRONTEND_PORT)],
         cwd=FRONTEND_DIR
     )
     
