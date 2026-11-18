@@ -18,6 +18,7 @@ import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend.automation import Dispatcher, StyleLearner
 from backend.automation.contact_resolver import ContactResolver
@@ -523,6 +524,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "http://127.0.0.1:1420",
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
             "http://localhost:3000",
             "http://127.0.0.1:3000",
         ],
@@ -572,16 +577,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             retrieval_info["vector_store_count"] = LanceDBVectorStore(runtime_settings).count()
         except Exception:
             retrieval_info["vector_store_count"] = 0
+
+        qwen_avail = QwenStyleProfiler(runtime_settings).availability()
+        gen_avail = QwenDrafter(runtime_settings).availability()
+        gpu_info = _gpu_status()
+
         accounts = account_manager.list_accounts()
         active = account_manager.get_active_account()
         return {
             "status": "ok",
-            "qwen": QwenStyleProfiler(runtime_settings).availability(),
-            "gpu": _gpu_status(),
+            "qwen": {
+                **qwen_avail,
+                "available": qwen_avail.get("preferred_ollama_model_available", False),
+                "model_available": qwen_avail.get("preferred_ollama_model_available", False),
+            },
+            "generation": {
+                **gen_avail,
+                "available": gen_avail.get("preferred_ollama_model_available", False),
+                "model_available": gen_avail.get("preferred_ollama_model_available", False),
+            },
+            "gpu": {
+                **gpu_info,
+                "gpu_name": gpu_info.get("name"),
+            },
             "sentence_transformer": _sentence_transformer_cache_status(runtime_settings),
             "local_user_data_dir": str(runtime_settings.local_user_data_dir),
             "retrieval": retrieval_info,
-            "generation": QwenDrafter(runtime_settings).availability(),
             "automation": {
                 "dispatcher_ready": True,
                 "style_learner_ready": True,
@@ -1281,6 +1302,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             draft_card=card,
             review_reason="; ".join(review_reasons) if review_reasons else None,
         )
+
+    # SPA static file serving (must be last to catch all non-API routes)
+    frontend_dist = runtime_settings.local_user_data_dir.parent / "frontend" / "dist"
+    if frontend_dist.exists():
+        app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="spa")
 
     return app
 

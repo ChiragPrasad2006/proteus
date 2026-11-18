@@ -4,24 +4,31 @@ Proteus Launcher - Standalone Windows executable for the Proteus email agent.
 
 This script manages the complete Proteus stack:
 1. Sets up environment variables (HF_HOME, EMAIL_WRITER_LOCAL_DATA_DIR)
-2. Starts Ollama if not running, verifies qwen3:8b model
-3. Starts FastAPI backend and polls for health
-4. Serves frontend (production build or Vite dev) and opens browser
-5. Clean shutdown on exit
+2. Starts Ollama if not running, verifies qwen3:8b model (with GPU warm-up)
+3. Builds frontend (npm run build) if needed
+4. Starts FastAPI backend and polls for health
+5. Opens browser to http://127.0.0.1:8000 (single-port serving)
+6. Clean shutdown on exit
 """
 
 from __future__ import annotations
 
 import atexit
+import json
 import os
 import signal
 import subprocess
 import sys
 import time
 import urllib.request
-import json
 from pathlib import Path
 from typing import Optional
+
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 # Configuration
 # When frozen by PyInstaller (--onefile), __file__ points into the temporary
@@ -32,14 +39,13 @@ if getattr(sys, "frozen", False):
 else:
     APP_ROOT = Path(__file__).resolve().parent
 
-VENV_PYTHON = Path(r"D:\MLops\.venv\Scripts\python.exe")
+VENV_PYTHON = Path(r"D:\\MLops\\.venv\\Scripts\\python.exe")
 # Use full path to npm to avoid PATH issues in frozen executable
-NPM_CMD = Path(r"C:\Program Files\nodejs\npm.cmd")
+NPM_CMD = Path(r"C:\\Program Files\\nodejs\\npm.cmd")
 BACKEND_MODULE = "backend.main:app"
 BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = 8000
 FRONTEND_DIR = APP_ROOT / "frontend"
-FRONTEND_PORT = 5173
 OLLAMA_URL = "http://127.0.0.1:11434"
 OLLAMA_MODEL = "qwen3:8b"
 HEALTH_ENDPOINT = f"http://{BACKEND_HOST}:{BACKEND_PORT}/api/health"
@@ -48,7 +54,6 @@ FRONTEND_DIST = FRONTEND_DIR / "dist"
 # Global process handles for cleanup
 ollama_process: Optional[subprocess.Popen] = None
 backend_process: Optional[subprocess.Popen] = None
-frontend_process: Optional[subprocess.Popen] = None
 
 
 def log(msg: str) -> None:
@@ -92,6 +97,49 @@ def wait_for_url(url: str, max_wait: int = 60, interval: float = 2.0, check_json
     return False, None
 
 
+def cleanup_stale_ports() -> None:
+    """Kill any stale processes listening on ports 8000 (FastAPI) and 5173 (Vite)."""
+    log("=" * 60)
+    log("[0/5] Pre-flight port cleanup (8000, 5173)...")
+    log("=" * 60)
+
+    target_ports = {8000, 5173}
+    killed_any = False
+
+    if HAS_PSUTIL:
+        for proc in psutil.process_iter(['pid', 'name']):
+            try:
+                for conn in proc.connections(kind='inet'):
+                    if conn.laddr.port in target_ports and conn.status == 'LISTEN':
+                        log(f"  Killing stale process on port {conn.laddr.port}: PID={proc.pid}, name={proc.info['name']}")
+                        proc.kill()
+                        killed_any = True
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    else:
+        # Fallback: use netstat + taskkill
+        try:
+            result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, timeout=10)
+            for line in result.stdout.splitlines():
+                for port in target_ports:
+                    if f":{port} " in line and "LISTENING" in line:
+                        parts = line.split()
+                        if len(parts) >= 5:
+                            pid = parts[-1]
+                            if pid.isdigit():
+                                log(f"  Killing stale process on port {port}: PID={pid}")
+                                subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True)
+                                killed_any = True
+        except Exception as e:
+            log(f"  Warning: netstat fallback failed: {e}")
+
+    if killed_any:
+        log("  Stale processes terminated, waiting for ports to release...")
+        time.sleep(2)
+    else:
+        log("  No stale listeners found on ports 8000 or 5173")
+
+
 def setup_environment() -> None:
     """Set up environment variables."""
     # HF_HOME on D: drive if available
@@ -113,7 +161,7 @@ def ensure_ollama() -> bool:
     global ollama_process
 
     log("=" * 60)
-    log("[1/4] Checking Ollama & qwen3:8b...")
+    log("[2/5] Checking Ollama & qwen3:8b...")
     log("=" * 60)
 
     # Check if Ollama API is responding
@@ -152,27 +200,115 @@ def ensure_ollama() -> bool:
         models = [m.get("name", "") for m in data.get("models", [])]
         if any(OLLAMA_MODEL in m for m in models):
             log(f"Model {OLLAMA_MODEL} is already available")
-            return True
-
-    log(f"Model {OLLAMA_MODEL} not found. Pulling...")
-    try:
-        result = subprocess.run(
-            ["ollama", "pull", OLLAMA_MODEL],
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if result.returncode != 0:
-            log(f"ERROR: Failed to pull {OLLAMA_MODEL}: {result.stderr}")
+        else:
+            log(f"Model {OLLAMA_MODEL} not found. Pulling...")
+            try:
+                result = subprocess.run(
+                    ["ollama", "pull", OLLAMA_MODEL],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+                if result.returncode != 0:
+                    log(f"ERROR: Failed to pull {OLLAMA_MODEL}: {result.stderr}")
+                    return False
+                log(f"Model {OLLAMA_MODEL} pulled successfully")
+            except subprocess.TimeoutExpired:
+                log(f"ERROR: Pulling {OLLAMA_MODEL} timed out")
+                return False
+            except Exception as e:
+                log(f"ERROR: Failed to pull model: {e}")
+                return False
+    else:
+        log(f"Model {OLLAMA_MODEL} not found. Pulling...")
+        try:
+            result = subprocess.run(
+                ["ollama", "pull", OLLAMA_MODEL],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if result.returncode != 0:
+                log(f"ERROR: Failed to pull {OLLAMA_MODEL}: {result.stderr}")
+                return False
+            log(f"Model {OLLAMA_MODEL} pulled successfully")
+        except subprocess.TimeoutExpired:
+            log(f"ERROR: Pulling {OLLAMA_MODEL} timed out")
             return False
-        log(f"Model {OLLAMA_MODEL} pulled successfully")
-        return True
-    except subprocess.TimeoutExpired:
-        log(f"ERROR: Pulling {OLLAMA_MODEL} timed out")
-        return False
+        except Exception as e:
+            log(f"ERROR: Failed to pull model: {e}")
+            return False
+
+    # GPU warm-up: send a tiny inference request to load qwen3:8b into VRAM
+    log(f"Warming up {OLLAMA_MODEL} on GPU (keep_alive=30m)...")
+    try:
+        warmup_payload = {
+            "model": OLLAMA_MODEL,
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": False,
+            "think": False,
+            "options": {"num_predict": 1},
+            "keep_alive": "30m"
+        }
+        req = urllib.request.Request(
+            f"{OLLAMA_URL}/api/chat",
+            data=json.dumps(warmup_payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "Proteus-Launcher/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status == 200:
+                log(f"{OLLAMA_MODEL} loaded into GPU VRAM and warmed up")
+            else:
+                log(f"Warm-up request returned {resp.status}, continuing anyway")
     except Exception as e:
-        log(f"ERROR: Failed to pull model: {e}")
+        log(f"Warning: GPU warm-up failed ({e}), continuing anyway")
+
+    return True
+
+
+def build_frontend() -> bool:
+    """Build frontend for production if dist is missing or outdated."""
+    if not FRONTEND_DIST.exists():
+        log("Frontend dist/ not found. Building...")
+        return run_npm_build()
+
+    # Check if source is newer than dist
+    try:
+        src_mtime = max(
+            (f.stat().st_mtime for f in FRONTEND_DIR.rglob("*") if f.is_file() and "node_modules" not in f.parts),
+            default=0
+        )
+        dist_mtime = FRONTEND_DIST.stat().st_mtime
+        if src_mtime > dist_mtime:
+            log("Frontend source is newer than dist/. Rebuilding...")
+            return run_npm_build()
+    except Exception:
+        pass
+
+    log("Frontend dist/ is up to date")
+    return True
+
+
+def run_npm_build() -> bool:
+    """Run npm run build in frontend directory."""
+    if not (FRONTEND_DIR / "package.json").exists():
+        log("ERROR: Frontend package.json not found")
         return False
+
+    log("Running npm install...")
+    result = subprocess.run([str(NPM_CMD), "install"], cwd=FRONTEND_DIR, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        log(f"ERROR: npm install failed: {result.stderr}")
+        return False
+
+    log("Running npm run build...")
+    result = subprocess.run([str(NPM_CMD), "run", "build"], cwd=FRONTEND_DIR, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        log(f"ERROR: npm run build failed: {result.stderr}")
+        return False
+
+    log("Frontend built successfully")
+    return True
 
 
 def start_backend() -> bool:
@@ -180,7 +316,7 @@ def start_backend() -> bool:
     global backend_process
 
     log("=" * 60)
-    log("[2/4] Starting FastAPI Backend...")
+    log("[4/5] Starting FastAPI Backend...")
     log("=" * 60)
 
     if not VENV_PYTHON.exists():
@@ -229,111 +365,31 @@ def start_backend() -> bool:
     return True
 
 
-def build_frontend() -> bool:
-    """Build frontend for production if dist is missing or outdated."""
-    if not FRONTEND_DIST.exists():
-        log("Frontend dist/ not found. Building...")
-        return run_npm_build()
-    
-    # Check if source is newer than dist
-    try:
-        src_mtime = max(
-            (f.stat().st_mtime for f in FRONTEND_DIR.rglob("*") if f.is_file() and "node_modules" not in f.parts),
-            default=0
-        )
-        dist_mtime = FRONTEND_DIST.stat().st_mtime
-        if src_mtime > dist_mtime:
-            log("Frontend source is newer than dist/. Rebuilding...")
-            return run_npm_build()
-    except Exception:
-        pass
-    
-    log("Frontend dist/ is up to date")
-    return True
-
-
-def run_npm_build() -> bool:
-    """Run npm run build in frontend directory."""
-    if not (FRONTEND_DIR / "package.json").exists():
-        log("ERROR: Frontend package.json not found")
-        return False
-
-    log("Running npm install...")
-    result = subprocess.run([str(NPM_CMD), "install"], cwd=FRONTEND_DIR, capture_output=True, text=True, timeout=120)
-    if result.returncode != 0:
-        log(f"ERROR: npm install failed: {result.stderr}")
-        return False
-
-    log("Running npm run build...")
-    result = subprocess.run([str(NPM_CMD), "run", "build"], cwd=FRONTEND_DIR, capture_output=True, text=True, timeout=120)
-    if result.returncode != 0:
-        log(f"ERROR: npm run build failed: {result.stderr}")
-        return False
-
-    log("Frontend built successfully")
-    return True
-
-
-def serve_frontend() -> bool:
-    """Serve frontend via Vite dev server (for development) or static files."""
-    global frontend_process
-
-    log("=" * 60)
-    log("[3/4] Starting Proteus UI...")
-    log("=" * 60)
-
-    # For now, use Vite dev server (easier for development)
-    # In production, we'd serve dist/ via FastAPI static files
-    if not (FRONTEND_DIR / "node_modules").exists():
-        log("node_modules not found. Running npm install...")
-        result = subprocess.run([str(NPM_CMD), "install"], cwd=FRONTEND_DIR, capture_output=True, text=True, timeout=120)
-        if result.returncode != 0:
-            log(f"ERROR: npm install failed: {result.stderr}")
-            return False
-
-    log("Starting Vite dev server...")
-    frontend_process = run_cmd(
-        [str(NPM_CMD), "run", "dev", "--", "--host", "0.0.0.0", "--port", str(FRONTEND_PORT)],
-        cwd=FRONTEND_DIR
-    )
-    
-    # Wait for Vite to compile
-    time.sleep(5)
-    
-    # Check if Vite is responding
-    success, _ = wait_for_url(f"http://localhost:{FRONTEND_PORT}", max_wait=30, interval=2.0)
-    if not success:
-        log("WARNING: Vite dev server may not be ready yet")
-    
-    return True
-
-
 def open_browser() -> None:
-    """Open the default browser to the frontend URL."""
+    """Open the default browser to the backend URL (single-port serving)."""
     log("=" * 60)
-    log("[4/4] Opening browser...")
+    log("[5/5] Opening browser...")
     log("=" * 60)
-    
-    frontend_url = f"http://localhost:{FRONTEND_PORT}"
+
+    backend_url = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
     try:
         if sys.platform == "win32":
-            os.startfile(frontend_url)  # type: ignore
+            os.startfile(backend_url)  # type: ignore
         elif sys.platform == "darwin":
-            subprocess.run(["open", frontend_url])
+            subprocess.run(["open", backend_url])
         else:
-            subprocess.run(["xdg-open", frontend_url])
-        log(f"Opened {frontend_url} in default browser")
+            subprocess.run(["xdg-open", backend_url])
+        log(f"Opened {backend_url} in default browser")
     except Exception as e:
         log(f"Could not open browser automatically: {e}")
-        log(f"Please manually open: {frontend_url}")
+        log(f"Please manually open: {backend_url}")
 
 
 def cleanup() -> None:
     """Clean up all child processes on exit."""
     log("Shutting down...")
-    
+
     for name, proc in [
-        ("Frontend", frontend_process),
         ("Backend", backend_process),
         ("Ollama", ollama_process),
     ]:
@@ -347,7 +403,7 @@ def cleanup() -> None:
                 proc.wait()
             except Exception:
                 pass
-    
+
     log("All processes terminated")
 
 
@@ -366,49 +422,54 @@ def main() -> int:
     signal.signal(signal.SIGTERM, signal_handler)
     if hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, signal_handler)
-    
+
     print("=" * 60)
     print("  Proteus — The Local-First AI Email Agent")
     print("=" * 60)
     print()
-    
+
+    # Step 0: Pre-flight port cleanup
+    cleanup_stale_ports()
+
     # Step 1: Environment
     log("=" * 60)
-    log("[1/4] Environment & Cache Safety")
+    log("[1/5] Environment & Cache Safety")
     log("=" * 60)
     setup_environment()
-    
-    # Step 2: Ollama
+
+    # Step 2: Build frontend (before backend so dist/ is ready for static serving)
+    log("=" * 60)
+    log("[2/5] Building frontend (production)...")
+    log("=" * 60)
+    if not build_frontend():
+        log("FATAL: Frontend build failed")
+        return 1
+
+    # Step 3: Ollama + GPU warm-up
     if not ensure_ollama():
         log("FATAL: Ollama setup failed")
         return 1
-    
-    # Step 3: Backend
+
+    # Step 4: Backend (serves both API and SPA static files)
     if not start_backend():
         log("FATAL: Backend startup failed")
         return 1
-    
-    # Step 4: Frontend
-    if not serve_frontend():
-        log("FATAL: Frontend startup failed")
-        return 1
-    
+
     # Step 5: Open browser
     open_browser()
-    
+
     # Success message
     print()
     print("=" * 60)
     print("  Proteus is live!")
     print("=" * 60)
-    print(f"  Backend API : http://{BACKEND_HOST}:{BACKEND_PORT}")
-    print(f"  Frontend UI : http://localhost:{FRONTEND_PORT}")
-    print(f"  API Health  : {HEALTH_ENDPOINT}")
-    print(f"  Ollama      : {OLLAMA_URL} (model: {OLLAMA_MODEL})")
+    print(f"  Backend API + UI : http://{BACKEND_HOST}:{BACKEND_PORT}")
+    print(f"  API Health       : {HEALTH_ENDPOINT}")
+    print(f"  Ollama           : {OLLAMA_URL} (model: {OLLAMA_MODEL})")
     print()
     print("  Press Ctrl+C to stop all services")
     print("=" * 60)
-    
+
     # Keep running until interrupted
     try:
         while True:
@@ -416,13 +477,10 @@ def main() -> int:
             if backend_process and backend_process.poll() is not None:
                 log("ERROR: Backend process died unexpectedly")
                 return 1
-            if frontend_process and frontend_process.poll() is not None:
-                log("ERROR: Frontend process died unexpectedly")
-                return 1
             time.sleep(5)
     except KeyboardInterrupt:
         log("Interrupted by user")
-    
+
     return 0
 
 

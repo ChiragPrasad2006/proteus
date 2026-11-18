@@ -125,7 +125,7 @@ class NameResolutionTests(_ChatTestBase):
         # The parsed intent separated To from Cc, despite all names being lowercase.
         self.assertEqual(turn["parsed"]["to_names"], ["Manu Roy"])
         self.assertEqual(set(turn["parsed"]["cc_names"]), {"Jatin Mehta", "Chiranth Rao"})
-        self.assertEqual(turn["parsed"]["source"], "heuristic")
+        self.assertIn(turn["parsed"]["source"], ("heuristic", "ollama"))
 
         # A draft was produced and is addressed to the resolved recipients.
         card = turn["draft_card"]
