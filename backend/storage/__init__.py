@@ -3,5 +3,13 @@
 from .profile_store import ProfileStore
 from .account_manager import AccountManager, AccountInfo
 from .chat_sessions import ChatSessionStore
+from .secret_vault import protect_secret, reveal_secret
 
-__all__ = ["ProfileStore", "AccountManager", "AccountInfo", "ChatSessionStore"]
+__all__ = [
+    "ProfileStore",
+    "AccountManager",
+    "AccountInfo",
+    "ChatSessionStore",
+    "protect_secret",
+    "reveal_secret",
+]

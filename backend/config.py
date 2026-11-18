@@ -75,12 +75,14 @@ class Settings:
         default_factory=lambda: int(os.getenv("EMAIL_WRITER_OLLAMA_NUM_CTX", "8192"))
     )
 
-    # Google OAuth settings
+    # Google identity OAuth settings. Mailbox access is deliberately separate
+    # and uses a Gmail App Password over IMAP/SMTP after the identity step.
     google_client_secrets_file: Path = field(
         default_factory=lambda: _path_from_env(
             "GOOGLE_CLIENT_SECRETS_FILE", Path.home() / ".config" / "gmail_client_secrets.json"
         )
     )
+    google_client_id: str = field(default_factory=lambda: os.getenv("GOOGLE_CLIENT_ID", "").strip())
     google_oauth_redirect_uri: str = field(
         default_factory=lambda: os.getenv(
             "GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback"
@@ -152,13 +154,11 @@ class Settings:
 
     @property
     def google_oauth_scopes(self) -> Tuple[str, ...]:
-        """Full Google OAuth2 scope set for desktop connect (identity + Gmail read/send)."""
+        """Only standard Google identity scopes; mailbox access happens separately."""
         return (
             "openid",
             "https://www.googleapis.com/auth/userinfo.email",
             "https://www.googleapis.com/auth/userinfo.profile",
-            "https://www.googleapis.com/auth/gmail.readonly",
-            "https://www.googleapis.com/auth/gmail.send",
         )
 
     def ensure_local_directories(self) -> None:

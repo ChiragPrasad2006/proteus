@@ -60,14 +60,15 @@ def _body_from_payload(payload: dict[str, Any]) -> str:
 class GmailConnector(BaseEmailConnector):
     """Reads Gmail ``in:sent`` mail and sends mail via Google's OAuth2 desktop flow.
 
-    The full scope set (``openid`` + ``userinfo`` + ``gmail.readonly`` + ``gmail.send``)
-    is requested so a single consent grants identity, extraction, and outbound send.
+    The landing-page identity flow passes only standard OpenID/userinfo scopes.
+    Gmail mailbox access is intentionally handled separately through the local
+    IMAP/SMTP App Password connector.
     """
 
     def __init__(self, client_secrets_file: Path, token_file: Path, scopes: list[str] | None = None) -> None:
         self.client_secrets_file = Path(client_secrets_file)
         self.token_file = Path(token_file)
-        self.scopes = list(scopes) if scopes else list(GMAIL_ALL_SCOPES)
+        self.scopes = list(scopes) if scopes else list(GOOGLE_IDENTITY_SCOPES)
 
     # --- OAuth2 desktop flow -------------------------------------------------
     def create_flow(self, redirect_uri: str | None = None, scopes: list[str] | None = None):

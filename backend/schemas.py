@@ -299,6 +299,29 @@ class GoogleOAuthCredentialsStatus(StrictModel):
     message: str
 
 
+class IdentityLoginRequest(StrictModel):
+    """Local identity fallback when a Google OAuth client is not configured."""
+
+    email: str = Field(min_length=3, max_length=320)
+    display_name: str = Field(min_length=1, max_length=120)
+
+
+class ConnectAppPasswordRequest(StrictModel):
+    """One Gmail App Password used only for local IMAP/SMTP verification."""
+
+    app_password: str = Field(min_length=16, max_length=32)
+    limit: int = Field(default=300, ge=1, le=500)
+
+
+class MailboxConnectResponse(StrictModel):
+    """Mailbox setup completion summary; never includes credentials."""
+
+    account: dict[str, Any]
+    extracted_emails: int
+    clean_emails_retained: int
+    message: str
+
+
 class AccountSwitchRequest(StrictModel):
     """Switch the active account."""
 

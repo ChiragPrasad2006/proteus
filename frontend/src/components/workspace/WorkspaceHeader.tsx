@@ -84,7 +84,7 @@ export function WorkspaceHeader() {
             </button>
           )}
           <p className="mt-0.5 truncate font-mono text-[11px] text-fg-faint">
-            {account.email} · workspace
+            {account?.email ?? 'Mailbox setup required'} · workspace
           </p>
         </div>
 

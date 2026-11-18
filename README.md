@@ -116,6 +116,15 @@ Open `http://localhost:5173` in your browser.
 
 ---
 
+## 🔐 Two-Step Google Sign-In + Mailbox Unlock
+
+1. Select **Continue with Google**. Proteus requests only standard identity scopes (`openid`, email, and profile), then opens `/workspace` with the mailbox still locked. If an OAuth client is not configured, the in-app Quick Setup modal lets you enter a Gmail identity locally or upload `client_secret.json`; it never uses browser alerts.
+2. In `/workspace`, open **Google App Passwords**, create a 16-character App Password, and paste it into the mandatory mailbox gate. Spaces are normalized before submission. Proteus verifies Gmail IMAP (`imap.gmail.com:993`) and SMTP (`smtp.gmail.com:465`), encrypts the password locally, imports recent Sent mail, rebuilds contacts/style/RAG data, and only then marks the account mailbox-connected.
+
+Google OAuth is used for identity only; it does not request Gmail API scopes. Each account owns its own SQLite files, LanceDB directory, contacts, sessions, OAuth tokens, and encrypted App Password under `local_user_data/accounts/<account_id>/`.
+
+---
+
 ## 📡 REST API Reference
 
 | Method | Endpoint | Description | Auth |

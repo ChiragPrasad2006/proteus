@@ -1,7 +1,10 @@
+import { useState } from 'react'
 import { ArrowRight, Lock, Mail, ShieldCheck } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { ConnectGmailModal } from '@/components/auth/ConnectGmailModal'
 import { GenerativeFrame } from '@/components/effects/GenerativeFrame'
 import { Button } from '@/components/ui/Button'
+import { startGoogleSignIn } from '@/lib/googleAuth'
 import { cn } from '@/lib/utils'
 
 function GoogleGlyph({ className }: { className?: string }) {
@@ -29,6 +32,14 @@ function GoogleGlyph({ className }: { className?: string }) {
 
 /** Asymmetrical 5:7 hero — copy and sign-in on the left, art on the right. */
 export function Hero() {
+  const [setupOpen, setSetupOpen] = useState(false)
+  const beginGoogleLogin = async () => {
+    try {
+      if (!await startGoogleSignIn()) setSetupOpen(true)
+    } catch {
+      setSetupOpen(true)
+    }
+  }
   return (
     <section className="relative overflow-hidden pt-36 pb-24 lg:pt-44 lg:pb-32">
       {/* Ambient bloom */}
@@ -67,6 +78,7 @@ export function Hero() {
           <div className="mt-10 flex flex-col gap-4 sm:flex-row sm:items-center">
             <button
               type="button"
+              onClick={beginGoogleLogin}
               className={cn(
                 'inline-flex h-12 items-center justify-center gap-3 rounded-full bg-fg px-6',
                 'text-[15px] font-medium text-ink transition-all duration-300 ease-proteus',
@@ -107,6 +119,7 @@ export function Hero() {
           <GenerativeFrame className="mx-auto max-w-[34rem] lg:ml-auto lg:mr-0 lg:max-w-[38rem]" />
         </div>
       </div>
+      <ConnectGmailModal isOpen={setupOpen} onClose={() => setSetupOpen(false)} />
     </section>
   )
 }

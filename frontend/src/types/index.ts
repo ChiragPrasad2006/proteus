@@ -19,6 +19,7 @@ export interface Account {
   name: string
   email: string
   provider: Provider
+  mailboxConnected: boolean
   /** Two-letter monogram rendered inside the avatar disc. */
   initials: string
   /** Tailwind gradient token used for the avatar background. */

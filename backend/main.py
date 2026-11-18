@@ -25,6 +25,7 @@ from backend.automation.contact_resolver import ContactResolver
 from backend.config import Settings
 from backend.connectors import (
     ConnectorError,
+    GmailAppPasswordConnector,
     GmailConnector,
     ImapConnector,
     LocalMailFileConnector,
@@ -54,6 +55,9 @@ from backend.schemas import (
     GoogleAuthStartResponse,
     GoogleOAuthCredentialsStatus,
     GoogleOAuthCredentialsUpload,
+    IdentityLoginRequest,
+    ConnectAppPasswordRequest,
+    MailboxConnectResponse,
     OnboardingRequest,
     OnboardingStatus,
     OutboundEmailRequest,
@@ -66,7 +70,14 @@ from backend.schemas import (
     SendReceipt,
     UserStyleProfile,
 )
-from backend.storage import AccountInfo, AccountManager, ChatSessionStore, ProfileStore
+from backend.storage import (
+    AccountInfo,
+    AccountManager,
+    ChatSessionStore,
+    ProfileStore,
+    protect_secret,
+    reveal_secret,
+)
 
 # Demo accounts created (and seeded) by the demo-seed endpoint.
 DEMO_ACCOUNTS = [
@@ -559,11 +570,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         return _resolve_account(x_account_id)
 
-    def _connector_for_account(acc_settings: Settings) -> GmailConnector:
-        """Build a Gmail connector bound to the account's stored OAuth token."""
+    def _connector_for_account(acc_settings: Settings):
+        """Return the selected account's verified outbound connector."""
+        app_password_file = acc_settings.local_user_data_dir / "app_password.bin"
+        if app_password_file.is_file():
+            try:
+                app_password = reveal_secret(app_password_file.read_text(encoding="utf-8"), acc_settings.local_user_data_dir)
+                account = account_manager.get_account(acc_settings.local_user_data_dir.name)
+                if account is not None:
+                    return GmailAppPasswordConnector(account.email, app_password)
+            except Exception:
+                # Do not expose secret-storage details through email endpoints.
+                pass
         return GmailConnector(
             acc_settings.google_client_secrets_file,
-            acc_settings.oauth_token_dir / "gmail_token.json",
+            acc_settings.oauth_token_dir / "google_identity.json",
+            scopes=list(acc_settings.google_oauth_scopes),
         )
 
     @app.get("/api/health")
@@ -613,13 +635,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         }
 
-    # --- Google OAuth2 desktop connect --------------------------------------
+    # --- Google identity login ------------------------------------------------
+    def _oauth_client_file() -> Path | None:
+        """Return the configured OAuth client file, including the local upload path."""
+        uploaded = runtime_settings.local_user_data_dir / "client_secret.json"
+        if uploaded.is_file():
+            return uploaded
+        if runtime_settings.google_client_secrets_file.is_file():
+            return runtime_settings.google_client_secrets_file
+        if runtime_settings.google_client_id:
+            # Installed-app OAuth clients are public clients. A client ID is
+            # enough to start the PKCE account chooser flow; no mailbox scope is
+            # requested here.
+            generated = runtime_settings.local_user_data_dir / "google_identity_client.json"
+            generated.write_text(
+                json.dumps(
+                    {
+                        "installed": {
+                            "client_id": runtime_settings.google_client_id,
+                            "project_id": "proteus-local",
+                            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                            "token_uri": "https://oauth2.googleapis.com/token",
+                            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                            "redirect_uris": [runtime_settings.google_oauth_redirect_uri],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return generated
+        return None
+
+    def _create_or_update_identity(email: str, display_name: str, avatar_url: str = "") -> AccountInfo:
+        existing = account_manager.get_account_by_email(email)
+        if existing is not None:
+            account = account_manager.update_account(
+                existing.account_id,
+                display_name=display_name,
+                avatar_url=avatar_url,
+                provider="gmail",
+            ) or existing
+        else:
+            account = account_manager.create_account(
+                email=email,
+                display_name=display_name,
+                provider="gmail",
+                avatar_url=avatar_url,
+                mailbox_connected=False,
+            )
+        account_manager.set_active_account(account.account_id)
+        return account
+
     @app.post("/api/auth/google/start", response_model=GoogleAuthStartResponse)
     def google_auth_start() -> GoogleAuthStartResponse:
         """Begin the Google OAuth2 desktop flow and return the consent URL."""
+        client_file = _oauth_client_file()
+        if client_file is None:
+            raise HTTPException(status_code=400, detail="Google OAuth credentials are not configured.")
         connector = GmailConnector(
-            runtime_settings.google_client_secrets_file,
-            runtime_settings.oauth_token_dir / "pending_token.json",
+            client_file,
+            runtime_settings.oauth_token_dir / "pending_identity.json",
+            scopes=list(runtime_settings.google_oauth_scopes),
         )
         redirect_uri = runtime_settings.google_oauth_redirect_uri
         state = secrets.token_urlsafe(24)
@@ -655,8 +731,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if pending is None:
             return RedirectResponse(url=f"{frontend}/?auth=error&reason=unknown_or_expired_state")
 
-        client_secrets = runtime_settings.google_client_secrets_file
-        connector = GmailConnector(client_secrets, runtime_settings.oauth_token_dir / "pending_token.json")
+        client_secrets = _oauth_client_file()
+        if client_secrets is None:
+            return RedirectResponse(url=f"{frontend}/?auth=error&reason=oauth_client_missing")
+        connector = GmailConnector(
+            client_secrets,
+            runtime_settings.oauth_token_dir / "pending_identity.json",
+            scopes=list(runtime_settings.google_oauth_scopes),
+        )
         try:
             credentials = connector.exchange_code(pending["flow"], code, pending.get("redirect_uri"))
         except ConnectorError:
@@ -674,45 +756,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         display_name = str(info.get("name") or email.split("@")[0])
         avatar_url = str(info.get("picture") or "")
 
-        existing = account_manager.get_account_by_email(email)
-        if existing is not None:
-            account_manager.update_account(
-                existing.account_id,
-                display_name=display_name,
-                avatar_url=avatar_url,
-                provider="gmail",
-            )
-            account = account_manager.get_account(existing.account_id) or existing
-        else:
-            account = account_manager.create_account(
-                email=email, display_name=display_name, provider="gmail", avatar_url=avatar_url
-            )
-        account_manager.set_active_account(account.account_id)
+        account = _create_or_update_identity(email, display_name, avatar_url)
 
         acc_settings = runtime_settings.for_account(account.account_id)
-        token_path = acc_settings.oauth_token_dir / "gmail_token.json"
         try:
-            connector.save_credentials(credentials, token_path)
+            connector.save_credentials(credentials, acc_settings.oauth_token_dir / "google_identity.json")
         except Exception:
             pass
 
-        # Trigger extraction + profiling + indexing + contacts after the redirect.
-        background_tasks.add_task(
-            _run_post_connect_pipeline,
-            acc_settings,
-            client_secrets,
-            token_path,
-            runtime_settings.default_extract_limit,
-        )
-        return RedirectResponse(url=f"{frontend}/?auth=success&account_id={account.account_id}")
+        # Identity sign-in never proves mailbox access. The workspace gate owns
+        # the subsequent IMAP/SMTP App Password verification and ingestion.
+        return RedirectResponse(url=f"{frontend}/workspace?auth=success&account_id={account.account_id}")
 
     @app.get("/api/auth/google/status", response_model=GoogleOAuthCredentialsStatus)
     def google_auth_status() -> GoogleOAuthCredentialsStatus:
-        """Check if Google OAuth client_secret.json is configured."""
-        client_secrets_path = runtime_settings.local_user_data_dir / "client_secret.json"
-        if client_secrets_path.exists():
-            return GoogleOAuthCredentialsStatus(configured=True, message="Google OAuth credentials are configured")
-        return GoogleOAuthCredentialsStatus(configured=False, message="Google OAuth credentials not found. Please upload client_secret.json")
+        """Check whether a Google identity OAuth client is configured."""
+        if _oauth_client_file() is not None:
+            return GoogleOAuthCredentialsStatus(configured=True, message="Google identity OAuth is configured")
+        return GoogleOAuthCredentialsStatus(
+            configured=False,
+            message="Google OAuth credentials are not configured. Use the local identity setup or upload client_secret.json.",
+        )
 
     @app.post("/api/auth/google/upload-credentials", response_model=GoogleOAuthCredentialsStatus)
     def google_auth_upload_credentials(request: GoogleOAuthCredentialsUpload) -> GoogleOAuthCredentialsStatus:
@@ -732,6 +796,72 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc))
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Failed to save credentials: {exc}")
+
+    @app.post("/api/auth/identity")
+    def local_identity_login(request: IdentityLoginRequest) -> dict[str, Any]:
+        """Create a local signed-in identity when Google OAuth is not configured."""
+        email = request.email.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise HTTPException(status_code=422, detail="Enter a valid email address.")
+        account = _create_or_update_identity(email, request.display_name.strip())
+        return {"account": account.to_dict()}
+
+    @app.post("/api/onboarding/connect-app-password", response_model=MailboxConnectResponse)
+    def connect_app_password(
+        request: ConnectAppPasswordRequest,
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> MailboxConnectResponse:
+        """Verify Gmail IMAP + SMTP, ingest Sent mail, then unlock the account."""
+        account, acc_settings = ctx
+        if account is None:
+            raise HTTPException(status_code=400, detail="X-Account-ID is required to unlock a mailbox.")
+        app_password = "".join(request.app_password.split())
+        if len(app_password) != 16:
+            raise HTTPException(status_code=400, detail="Google App Passwords must contain exactly 16 characters.")
+
+        connector = GmailAppPasswordConnector(account.email, app_password)
+        try:
+            connector.verify_connection()
+            raw_records = connector.fetch_sent_emails(request.limit)
+        except ConnectorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        store = ProfileStore(acc_settings)
+        status = _clean_and_persist(raw_records, store, acc_settings)
+        cleaned = store.load_cleaned_emails()
+        if cleaned:
+            try:
+                metrics = compute_stylometry(cleaned)
+                profile = UserStyleProfile(
+                    profile_id=str(uuid.uuid4()),
+                    created_at=datetime.now(timezone.utc),
+                    deterministic_stylometry=metrics,
+                    global_style_card=QwenStyleProfiler(acc_settings).profile(cleaned, metrics),
+                    corpus_statistics=store.corpus_statistics(cleaned),
+                )
+                store.save_profile(profile)
+            except Exception:
+                pass
+            try:
+                account_embedder = LocalEmbedder()
+                account_embedder.load()
+                LanceDBVectorStore(acc_settings).index_emails(cleaned, account_embedder, force_recreate=True)
+            except Exception:
+                pass
+            try:
+                ContactResolver(acc_settings.contacts_path).rebuild_from_emails(cleaned)
+            except Exception:
+                pass
+
+        secret_path = acc_settings.local_user_data_dir / "app_password.bin"
+        secret_path.write_text(protect_secret(app_password, acc_settings.local_user_data_dir), encoding="utf-8")
+        updated = account_manager.update_account(account.account_id, mailbox_connected=True) or account
+        return MailboxConnectResponse(
+            account=updated.to_dict(),
+            extracted_emails=status.extracted_emails,
+            clean_emails_retained=status.clean_emails_retained,
+            message="Mailbox verified and Sent mail ingestion completed.",
+        )
 
     # --- Account management -------------------------------------------------
     @app.get("/api/accounts", response_model=AccountListResponse)
@@ -814,6 +944,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if profile is None:
             raise HTTPException(status_code=404, detail="No profile has been built yet.")
         return profile
+
+    @app.get("/api/contacts")
+    def list_contacts(ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx)) -> dict[str, Any]:
+        """Return the active account's resolved contacts."""
+        _, acc_settings = ctx
+        try:
+            resolver = ContactResolver(acc_settings.contacts_path)
+            contacts = resolver.list_contacts()
+            return {"contacts": [c.to_dict() for c in contacts]}
+        except Exception:
+            return {"contacts": []}
 
     @app.post("/api/onboarding/demo-seed", response_model=OnboardingStatus)
     def demo_seed() -> OnboardingStatus:

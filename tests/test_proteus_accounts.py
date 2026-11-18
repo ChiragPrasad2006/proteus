@@ -380,5 +380,85 @@ class ChatSessionCrudTests(_AccountTestBase):
         self.assertEqual(missing.status_code, 404, missing.text)
 
 
+class GoogleIdentityAndMailboxGateTests(_AccountTestBase):
+    """Identity login creates a locked account; verified app passwords unlock it."""
+
+    def test_google_identity_scopes_are_non_sensitive(self) -> None:
+        self.assertEqual(
+            self.settings.google_oauth_scopes,
+            (
+                "openid",
+                "https://www.googleapis.com/auth/userinfo.email",
+                "https://www.googleapis.com/auth/userinfo.profile",
+            ),
+        )
+
+    def test_manual_identity_creates_locked_account(self) -> None:
+        response = self.client.post(
+            "/api/auth/identity",
+            json={"email": "person@gmail.com", "display_name": "Person Example"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        account = response.json()["account"]
+        self.assertFalse(account["mailbox_connected"])
+
+        index = json.loads(
+            (self.settings.local_user_data_dir / "accounts_index.json").read_text(encoding="utf-8")
+        )
+        self.assertFalse(index[account["account_id"]]["mailbox_connected"])
+
+    def test_verified_app_password_unlocks_and_is_not_stored_as_plaintext(self) -> None:
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+
+        identity = self.client.post(
+            "/api/auth/identity",
+            json={"email": "person@gmail.com", "display_name": "Person Example"},
+        )
+        self.assertEqual(identity.status_code, 200, identity.text)
+        account_id = identity.json()["account"]["account_id"]
+
+        class FakeGmailAppPasswordConnector:
+            verified: tuple[str, str]
+
+            def __init__(self, email: str, app_password: str) -> None:
+                self.email = email
+                self.app_password = app_password
+
+            def verify_connection(self) -> None:
+                self.__class__.verified = (self.email, self.app_password)
+
+            def fetch_sent_emails(self, limit: int):
+                return [
+                    __import__("backend.schemas", fromlist=["RawSentEmail"]).RawSentEmail(
+                        message_id="sent-1",
+                        recipient_email="friend@example.com",
+                        subject="Hello",
+                        raw_body="Hello friend, this is a sufficiently long sent message for testing.",
+                        timestamp=datetime.now(timezone.utc),
+                    )
+                ]
+
+            def send_email(self, payload):  # pragma: no cover - endpoint does not send
+                raise AssertionError("send_email must not run during onboarding")
+
+        password = "abcdefghijklmnop"
+        with patch("backend.main.GmailAppPasswordConnector", FakeGmailAppPasswordConnector):
+            response = self.client.post(
+                "/api/onboarding/connect-app-password",
+                headers={"X-Account-ID": account_id},
+                json={"app_password": "abcd efgh ijkl mnop", "limit": 5},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(FakeGmailAppPasswordConnector.verified, ("person@gmail.com", password))
+        self.assertTrue(response.json()["account"]["mailbox_connected"])
+
+        account_root = self.settings.for_account(account_id).local_user_data_dir
+        blob = (account_root / "app_password.bin").read_text(encoding="utf-8")
+        self.assertNotIn(password, blob)
+        self.assertTrue(blob.startswith(("dpapi:", "fernet:")))
+
+
 if __name__ == "__main__":
     unittest.main()

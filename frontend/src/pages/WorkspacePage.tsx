@@ -8,18 +8,8 @@ import { WorkspaceHeader } from '@/components/workspace/WorkspaceHeader'
 import { useHealth } from '@/hooks/useHealth'
 import { ApiError, api } from '@/lib/api'
 import { uid } from '@/lib/utils'
-import { SEED_DRAFT, useActiveAccount, useAppStore } from '@/stores/useAppStore'
-import type { ChatMessage, EmailDraft, RecipientContact } from '@/types'
-
-const DEMO_CONTACT: RecipientContact = {
-  id: 'rc_demo',
-  name: 'Daniel Reyes',
-  email: 'd.reyes@acme-holdings.com',
-  tier: 'executive_or_client',
-  relationship: 'Executive / Client',
-  confidence: 0.94,
-  sentCount: 14,
-}
+import { useActiveAccount, useAppStore } from '@/stores/useAppStore'
+import type { ChatMessage, EmailDraft } from '@/types'
 
 /** Cached, clearly-labelled fallback shown when the local API is unreachable. */
 function demoReply(): ChatMessage {
@@ -31,8 +21,8 @@ function demoReply(): ChatMessage {
     createdAt: new Date().toISOString(),
     status: 'done',
     reasoning: ['Backend offline — demo mode', 'Loaded a cached example draft'],
-    contacts: [DEMO_CONTACT],
-    draft: { ...SEED_DRAFT, id: uid('draft'), status: 'PENDING_REVIEW' },
+    contacts: [],
+    draft: null,
   }
 }
 
@@ -58,7 +48,7 @@ export function WorkspacePage() {
 
   const chat = useMutation({
     mutationFn: (payload: { session_id: string; user_message: string; auto_send?: boolean }) =>
-      api.chatTurn(payload, account.id),
+      api.chatTurn(payload, account?.id),
     onSuccess: (data) => {
       setBanner(null)
       const source = (data.parsed?.source as string) || 'ollama'
@@ -81,7 +71,7 @@ export function WorkspacePage() {
 
   const approve = useMutation({
     mutationFn: (payload: { draft_id: string; final_subject: string; final_body: string }) =>
-      api.approveAndLearn(payload, account.id),
+      api.approveAndLearn(payload, account?.id),
     onSuccess: () => setBanner(null),
     onError: (err) => setBanner(humanError(err)),
   })
@@ -96,7 +86,7 @@ export function WorkspacePage() {
         status: 'done',
       })
       chat.mutate({
-        session_id: activeSessionId,
+        session_id: activeSessionId ?? '',
         user_message: text,
         auto_send: autoSend,
       })

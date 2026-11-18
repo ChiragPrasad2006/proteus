@@ -19,6 +19,9 @@ class AccountInfo:
     display_name: str
     avatar_url: str = ""
     provider: str = "gmail"
+    # False until IMAP/SMTP or OAuth mailbox credentials are verified for this
+    # account. Legacy index entries without this key load as False.
+    mailbox_connected: bool = False
     is_active: bool = False
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -30,6 +33,7 @@ class AccountInfo:
             "display_name": self.display_name,
             "avatar_url": self.avatar_url,
             "provider": self.provider,
+            "mailbox_connected": self.mailbox_connected,
             "is_active": self.is_active,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -37,7 +41,18 @@ class AccountInfo:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AccountInfo":
-        return cls(**data)
+        """Load an index entry tolerantly.
+
+        Unknown keys are ignored (forward compatibility) and legacy entries
+        without ``mailbox_connected`` default to False (backward compatibility).
+        """
+        if not isinstance(data, dict):
+            raise ValueError("Account index entry must be a JSON object.")
+        field_names = set(cls.__dataclass_fields__)
+        kwargs = {key: value for key, value in data.items() if key in field_names}
+        if "mailbox_connected" in data:
+            kwargs["mailbox_connected"] = bool(data["mailbox_connected"])
+        return cls(**kwargs)
 
 
 class AccountManager:
@@ -86,6 +101,7 @@ class AccountManager:
             "raw_emails_jsonl": base / "raw_sent_emails.jsonl",
             "chat_sessions": base / "chat_sessions.sqlite3",
             "oauth_tokens": base / "oauth_tokens",
+            "app_password": base / "app_password.bin",
         }
 
     def create_account(
@@ -94,8 +110,14 @@ class AccountManager:
         display_name: str,
         provider: str = "gmail",
         avatar_url: str = "",
+        mailbox_connected: bool = False,
     ) -> AccountInfo:
-        """Create a new account with a generated account_id."""
+        """Create a new account with a generated account_id.
+
+        ``mailbox_connected`` defaults to False: a connection is recorded only
+        after the account's mailbox credentials have been verified (see the
+        connect-app-password endpoint).
+        """
         account_id = str(uuid.uuid4())[:12]  # Short readable ID
         account = AccountInfo(
             account_id=account_id,
@@ -103,6 +125,7 @@ class AccountManager:
             display_name=display_name,
             avatar_url=avatar_url,
             provider=provider,
+            mailbox_connected=mailbox_connected,
             is_active=True,
         )
         index = self._load_index()
@@ -175,13 +198,18 @@ class AccountManager:
         return True
 
     def update_account(self, account_id: str, **kwargs) -> AccountInfo | None:
-        """Update account fields."""
+        """Update account fields.
+
+        Known ``AccountInfo`` fields are accepted even when the stored entry
+        predates them (e.g. ``mailbox_connected`` on a legacy index entry).
+        """
         index = self._load_index()
         if account_id not in index:
             return None
         data = index[account_id]
+        known_fields = set(AccountInfo.__dataclass_fields__)
         for key, value in kwargs.items():
-            if key in data and key != "account_id":
+            if key in known_fields and key != "account_id":
                 data[key] = value
         data["updated_at"] = datetime.now(timezone.utc).isoformat()
         self._save_index(index)
