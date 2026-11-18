@@ -109,7 +109,7 @@ def cleanup_stale_ports() -> None:
     if HAS_PSUTIL:
         for proc in psutil.process_iter(['pid', 'name']):
             try:
-                for conn in proc.connections(kind='inet'):
+                for conn in proc.net_connections(kind='inet'):
                     if conn.laddr.port in target_ports and conn.status == 'LISTEN':
                         log(f"  Killing stale process on port {conn.laddr.port}: PID={proc.pid}, name={proc.info['name']}")
                         proc.kill()

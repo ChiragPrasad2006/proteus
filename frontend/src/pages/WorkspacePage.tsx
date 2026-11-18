@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import { AlertTriangle, X } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { MailboxSetupGate } from '@/components/auth/MailboxSetupGate'
 import { MessageThread } from '@/components/workspace/MessageThread'
 import { PromptComposer } from '@/components/workspace/PromptComposer'
 import { Sidebar } from '@/components/workspace/Sidebar'
@@ -40,6 +41,26 @@ export function WorkspacePage() {
   const activeSessionId = useAppStore((s) => s.activeSessionId)
   const autoSend = useAppStore((s) => s.autoSend)
   const account = useActiveAccount()
+  const setAccounts = useAppStore((s) => s.setAccounts)
+  const setActiveAccount = useAppStore((s) => s.setActiveAccount)
+
+  useEffect(() => {
+    let disposed = false
+    const hydrateFromRedirect = async () => {
+      try {
+        const result = await api.listAccounts()
+        if (disposed) return
+        const params = new URLSearchParams(window.location.search)
+        const redirectAccountId = params.get('auth') === 'success' ? params.get('account_id') : null
+        const activeId = redirectAccountId ?? result.active_account_id
+        setAccounts(result.accounts, activeId)
+        if (redirectAccountId) window.history.replaceState({}, '', '/workspace')
+        if (activeId) await setActiveAccount(activeId)
+      } catch (err) { if (!disposed) setBanner(humanError(err)) }
+    }
+    void hydrateFromRedirect()
+    return () => { disposed = true }
+  }, [setAccounts, setActiveAccount])
 
   const [banner, setBanner] = useState<string | null>(null)
 
@@ -137,7 +158,11 @@ export function WorkspacePage() {
       <div className="flex min-w-0 flex-1 flex-col">
         <WorkspaceHeader />
 
-        {showBanner ? (
+        {account && !account.mailboxConnected ? (
+          <MailboxSetupGate account={account} onConnected={() => void setActiveAccount(account.id)} />
+        ) : (
+          <>
+            {showBanner ? (
           <div className="flex items-center gap-2.5 border-b border-hairline bg-[#f59e0b]/[0.07] px-4 py-2.5 lg:px-6">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[#fbbf24]" strokeWidth={1.8} />
             <p className="min-w-0 flex-1 truncate text-[12px] text-[#fbbf24]">
@@ -166,7 +191,9 @@ export function WorkspacePage() {
           onTweak={handleTweak}
         />
 
-        <PromptComposer busy={chat.isPending} onSend={handleSend} />
+            <PromptComposer busy={chat.isPending} onSend={handleSend} />
+          </>
+        )}
       </div>
     </div>
   )

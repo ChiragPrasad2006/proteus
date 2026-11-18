@@ -17,7 +17,7 @@ from typing import Annotated, Any
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.automation import Dispatcher, StyleLearner
@@ -1444,10 +1444,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             review_reason="; ".join(review_reasons) if review_reasons else None,
         )
 
-    # SPA static file serving (must be last to catch all non-API routes)
+    # Serve the compiled SPA without allowing StaticFiles to intercept unknown
+    # client-side routes (for example /workspace after OAuth callback).
     frontend_dist = runtime_settings.local_user_data_dir.parent / "frontend" / "dist"
-    if frontend_dist.exists():
-        app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="spa")
+    assets_dir = frontend_dist / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> FileResponse:
+        icon = frontend_dist / "favicon.svg"
+        if not icon.is_file():
+            raise HTTPException(status_code=404, detail="Favicon not found.")
+        return FileResponse(icon)
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str) -> FileResponse:
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        requested = frontend_dist / full_path
+        if full_path and requested.is_file():
+            return FileResponse(requested)
+        index = frontend_dist / "index.html"
+        if not index.is_file():
+            raise HTTPException(status_code=404, detail="Frontend build not found.")
+        return FileResponse(index)
 
     return app
 

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { FolderTabs } from '@/components/landing/FolderTabs'
 import { Hero } from '@/components/landing/Hero'
 import { ShowcaseGrid } from '@/components/landing/ShowcaseGrid'
@@ -8,9 +9,18 @@ import { Wordmark } from '@/components/ui/Wordmark'
 
 /** Marketing page: fixed navbar → 5:7 hero → serrated tear → product → method → CTA. */
 export function LandingPage() {
+  const [oauthError, setOauthError] = useState<string | null>(null)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('auth') === 'error') {
+      setOauthError(params.get('reason') || 'Google sign-in could not be completed.')
+      window.history.replaceState({}, '', '/')
+    }
+  }, [])
   return (
     <div className="min-h-screen bg-ink text-fg">
       <Navbar />
+      {oauthError ? <div role="status" className="mx-auto mt-4 max-w-7xl rounded border border-red/40 bg-red/10 px-4 py-3 text-sm text-red">{oauthError}</div> : null}
 
       <main>
         <Hero />
