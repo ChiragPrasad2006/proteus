@@ -153,6 +153,9 @@ def setup_environment() -> None:
     local_data_dir = APP_ROOT / "local_user_data"
     local_data_dir.mkdir(parents=True, exist_ok=True)
     os.environ["EMAIL_WRITER_LOCAL_DATA_DIR"] = str(local_data_dir)
+    # The packaged launcher serves the built SPA from FastAPI on port 8000;
+    # OAuth callbacks must not redirect to Vite's development port 5173.
+    os.environ["FRONTEND_URL"] = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
     log(f"EMAIL_WRITER_LOCAL_DATA_DIR set to {local_data_dir}")
 
 

@@ -85,21 +85,13 @@ export function ConnectGmailModal({ isOpen, onClose }: ConnectGmailModalProps) {
     setConnectingAppPassword(true)
     setError(null)
     try {
-      // Add account via IMAP connector with Gmail settings
-      await api.connectAndExtract({
-        provider: 'imap',
-        credentials: {
-          host: 'imap.gmail.com',
-          port: 993,
-          username: appPasswordForm.email.trim(),
-          password: appPasswordForm.appPassword.trim(),
-          folder: 'Sent',
-        },
+      const normalizedPassword = appPasswordForm.appPassword.replace(/\s+/g, '')
+      const account = await api.identityLogin({
+        email: appPasswordForm.email.trim(),
+        display_name: appPasswordForm.displayName.trim() || appPasswordForm.email.trim().split('@')[0] || 'Gmail user',
       })
-      // The backend will create the account, now we need to switch to it
-      // For now, just close modal and let the account list refresh
+      await api.connectAppPassword(normalizedPassword, account.id)
       onClose()
-      // The account will be in the list, user can switch to it
     } catch (err) {
       console.error('Failed to connect via App Password:', err)
       setError(err instanceof Error ? err.message : 'Failed to connect. Check email and App Password.')
@@ -354,7 +346,12 @@ export function ConnectGmailModal({ isOpen, onClose }: ConnectGmailModalProps) {
                     type="password"
                     required
                     value={appPasswordForm.appPassword}
-                    onChange={(e) => setAppPasswordForm((f) => ({ ...f, appPassword: e.target.value }))}
+                    onChange={(e) => setAppPasswordForm((f) => ({ ...f, appPassword: e.target.value.replace(/\s+/g, '') }))}
+                    onPaste={(e) => {
+                      e.preventDefault()
+                      const normalized = e.clipboardData.getData('text').replace(/\s+/g, '')
+                      setAppPasswordForm((f) => ({ ...f, appPassword: normalized }))
+                    }}
                     placeholder="xxxx xxxx xxxx xxxx"
                     className="mb-3 w-full rounded-xl border border-hairline bg-ink/60 px-3 py-2 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent/50 focus:outline-none font-mono"
                     maxLength={16}
