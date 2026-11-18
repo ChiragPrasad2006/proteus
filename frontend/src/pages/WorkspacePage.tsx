@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query'
 import { AlertTriangle, X } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { MessageThread } from '@/components/workspace/MessageThread'
 import { PromptComposer } from '@/components/workspace/PromptComposer'
 import { Sidebar } from '@/components/workspace/Sidebar'
@@ -52,7 +52,6 @@ export function WorkspacePage() {
   const account = useActiveAccount()
 
   const [banner, setBanner] = useState<string | null>(null)
-  const seededRef = useRef(false)
 
   const health = useHealth()
   const offline = health.isError
@@ -86,16 +85,6 @@ export function WorkspacePage() {
     onSuccess: () => setBanner(null),
     onError: (err) => setBanner(humanError(err)),
   })
-
-  const seed = useMutation({ mutationFn: api.demoSeed })
-
-  // Ensure the backend has a demo corpus the first time it comes online.
-  useEffect(() => {
-    if (health.isSuccess && !seededRef.current) {
-      seededRef.current = true
-      seed.mutate()
-    }
-  }, [health.isSuccess, seed])
 
   const handleSend = useCallback(
     (text: string) => {

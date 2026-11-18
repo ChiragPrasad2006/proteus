@@ -51,6 +51,8 @@ from backend.schemas import (
     DraftRequest,
     DraftResponse,
     GoogleAuthStartResponse,
+    GoogleOAuthCredentialsStatus,
+    GoogleOAuthCredentialsUpload,
     OnboardingRequest,
     OnboardingStatus,
     OutboundEmailRequest,
@@ -682,6 +684,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             runtime_settings.default_extract_limit,
         )
         return RedirectResponse(url=f"{frontend}/?auth=success&account_id={account.account_id}")
+
+    @app.get("/api/auth/google/status", response_model=GoogleOAuthCredentialsStatus)
+    def google_auth_status() -> GoogleOAuthCredentialsStatus:
+        """Check if Google OAuth client_secret.json is configured."""
+        client_secrets_path = runtime_settings.local_user_data_dir / "client_secret.json"
+        if client_secrets_path.exists():
+            return GoogleOAuthCredentialsStatus(configured=True, message="Google OAuth credentials are configured")
+        return GoogleOAuthCredentialsStatus(configured=False, message="Google OAuth credentials not found. Please upload client_secret.json")
+
+    @app.post("/api/auth/google/upload-credentials", response_model=GoogleOAuthCredentialsStatus)
+    def google_auth_upload_credentials(request: GoogleOAuthCredentialsUpload) -> GoogleOAuthCredentialsStatus:
+        """Upload and validate Google OAuth client_secret.json."""
+        import json
+        try:
+            creds = json.loads(request.client_secret_json)
+            # Validate it has the required structure for a desktop OAuth client
+            if "installed" not in creds and "web" not in creds:
+                raise ValueError("Invalid client_secret.json: must contain 'installed' or 'web' client configuration")
+            client_secrets_path = runtime_settings.local_user_data_dir / "client_secret.json"
+            client_secrets_path.write_text(request.client_secret_json, encoding="utf-8")
+            return GoogleOAuthCredentialsStatus(configured=True, message="Google OAuth credentials uploaded successfully")
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON format")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to save credentials: {exc}")
 
     # --- Account management -------------------------------------------------
     @app.get("/api/accounts", response_model=AccountListResponse)

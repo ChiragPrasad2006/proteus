@@ -286,6 +286,19 @@ class GoogleAuthStartResponse(StrictModel):
     redirect_uri: str
 
 
+class GoogleOAuthCredentialsUpload(StrictModel):
+    """Upload Google OAuth client_secret.json content."""
+
+    client_secret_json: str  # JSON content of client_secret.json
+
+
+class GoogleOAuthCredentialsStatus(StrictModel):
+    """Status of Google OAuth credentials."""
+
+    configured: bool
+    message: str
+
+
 class AccountSwitchRequest(StrictModel):
     """Switch the active account."""
 

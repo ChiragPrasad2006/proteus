@@ -48,26 +48,36 @@ Proteus implements a **4-Tier Hybrid Personalization Stack** that progressively 
 
 ## 🚀 Quickstart
 
-### Option A: One-Click Launcher (Windows)
+### Option A: One-Click Launcher — `Proteus.exe` (Recommended, Windows)
 ```powershell
 # Clone the repo
 git clone https://github.com/ChiragPrasad2006/proteus.git
 cd proteus
 
 # Double-click or run:
-.\start_proteus.bat
+.\Proteus.exe
 ```
 The launcher will:
 1. ✅ Set `HF_HOME=D:\huggingface_cache` and `EMAIL_WRITER_LOCAL_DATA_DIR=./local_user_data`
 2. ✅ Start Ollama (if not running) and pull `qwen3:8b`
 3. ✅ Launch FastAPI backend on `http://127.0.0.1:8000`
 4. ✅ Launch Vite frontend on `http://localhost:5173` and open your browser
+5. ✅ Clean shutdown on close (Ctrl+C or close window)
 
+> **No manual dependency management** — `Proteus.exe` is a standalone executable (~6 MB) built with PyInstaller.
+
+---
+
+### Option B: Legacy Batch Launcher (Windows)
+```powershell
+# Double-click or run:
+.\start_proteus.bat
+```
 > **Stop everything**: `.\stop_proteus.bat`
 
 ---
 
-### Option B: Manual Terminal Commands
+### Option C: Manual Terminal Commands
 
 #### Prerequisites
 - **Ollama** installed and `qwen3:8b` pulled: `ollama pull qwen3:8b`
@@ -104,12 +114,14 @@ Open `http://localhost:5173` in your browser.
 ## 🔐 Google OAuth Setup (Gmail Integration)
 
 1. Go to **Google Cloud Console** → **APIs & Services** → **Credentials**
-2. Create **OAuth 2.0 Client ID** → **Web application**
+2. Create **OAuth 2.0 Client ID** → **Desktop application** (not Web)
 3. **Authorized redirect URIs**: `http://localhost:8000/auth/google/callback`
 4. Download `client_secret.json` → place in `proteus/` root (auto-gitignored)
-5. In the Proteus UI: **Settings → Accounts → Add Gmail Account** → follow OAuth flow
+5. In the Proteus UI: **Account Switcher → Add Account → Gmail** → upload `client_secret.json` → follow OAuth flow
 
 > **Scopes requested**: `https://www.googleapis.com/auth/gmail.readonly`, `https://www.googleapis.com/auth/gmail.send`, `https://www.googleapis.com/auth/userinfo.email`, `openid`
+
+> **Graceful handling**: If `client_secret.json` is missing, the UI shows an inline **1-Step Google OAuth Setup Modal** with a file-upload dropzone and step-by-step instructions to create a Desktop OAuth client ID in Google Cloud Console.
 
 ---
 
@@ -118,9 +130,12 @@ Open `http://localhost:5173` in your browser.
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
 | `GET` | `/api/health` | Health check | None |
+| `GET` | `/api/auth/google/status` | Check OAuth credentials status | None |
+| `POST` | `/api/auth/google/upload-credentials` | Upload `client_secret.json` | None |
+| `POST` | `/api/auth/google/start` | Initiate Gmail OAuth flow | None |
+| `GET` | `/api/auth/google/callback` | OAuth callback (auto) | None |
 | `GET` | `/api/accounts` | List connected email accounts | Cookie/Token |
-| `POST` | `/api/accounts/gmail` | Initiate Gmail OAuth flow | Cookie/Token |
-| `GET` | `/api/accounts/gmail/callback` | OAuth callback (auto) | None |
+| `POST` | `/api/accounts/switch` | Switch active account | Cookie/Token |
 | `DELETE` | `/api/accounts/{account_id}` | Disconnect account | Cookie/Token |
 | `GET` | `/api/emails` | List emails (paginated, filterable) | Cookie/Token |
 | `POST` | `/api/emails/sync` | Trigger full sync for account | Cookie/Token |
@@ -179,24 +194,26 @@ npm run build
 
 ```
 proteus/
-├── start_proteus.bat          # One-click Windows launcher
-├── stop_proteus.bat           # Stop all services
-├── .gitignore                 # Hardened: no secrets, no binaries, no caches
-├── README.md                  # This file
+├── Proteus.exe                 # Standalone Windows launcher (~6 MB)
+├── start_proteus.bat           # Legacy batch launcher
+├── stop_proteus.bat            # Stop all services
+├── launcher.py                 # Source for Proteus.exe
+├── .gitignore                  # Hardened: no secrets, no binaries, no caches
+├── README.md                   # This file
 ├── LICENSE
-├── requirements.txt           # Python dependencies
+├── requirements.txt            # Python dependencies
 ├── backend/
-│   ├── main.py                # FastAPI app entry
-│   ├── config.py              # Central config (env-driven)
-│   ├── automation/            # Tier 4: dispatch, style learning
-│   ├── connectors/            # Tier 1: Gmail, Outlook, IMAP, MBOX
-│   ├── generation/            # Tier 3: Qwen3:8B drafter (think=true/false)
-│   ├── processing/            # Tier 1: cleaner, stylometry
-│   ├── profiler/              # Tier 3: deep reasoning profiler
-│   ├── retrieval/             # Tier 2: embedder, LanceDB vector store
-│   ├── schemas.py             # Pydantic models (API contracts)
-│   └── storage/               # Profile store, chat sessions, account manager
-├── frontend/                  # Vite + React + TypeScript + Tailwind
+│   ├── main.py                 # FastAPI app entry
+│   ├── config.py               # Central config (env-driven)
+│   ├── automation/             # Tier 4: dispatch, style learning
+│   ├── connectors/             # Tier 1: Gmail, Outlook, IMAP, MBOX
+│   ├── generation/             # Tier 3: Qwen3:8B drafter (think=true/false)
+│   ├── processing/             # Tier 1: cleaner, stylometry
+│   ├── profiler/               # Tier 3: deep reasoning profiler
+│   ├── retrieval/              # Tier 2: embedder, LanceDB vector store
+│   ├── schemas.py              # Pydantic models (API contracts)
+│   └── storage/                # Profile store, chat sessions, account manager
+├── frontend/                   # Vite + React + TypeScript + Tailwind
 │   ├── src/
 │   ├── package.json
 │   └── vite.config.ts
@@ -204,10 +221,10 @@ proteus/
 │   ├── test_proteus_accounts.py
 │   ├── test_proteus_chat.py
 │   └── test_security_audit.py
-├── local_user_data/           # GITIGNORED — per-account SQLite, tokens, style DB
-├── oauth_tokens/              # GITIGNORED — OAuth refresh tokens
-├── checkpoints/               # GITIGNORED — LoRA adapters, model checkpoints
-└── exported_models/           # GITIGNORED — merged GGUF/ONNX exports
+├── local_user_data/            # GITIGNORED — per-account SQLite, tokens, style DB
+├── oauth_tokens/               # GITIGNORED — OAuth refresh tokens
+├── checkpoints/                # GITIGNORED — LoRA adapters, model checkpoints
+└── exported_models/            # GITIGNORED — merged GGUF/ONNX exports
 ```
 
 ---
