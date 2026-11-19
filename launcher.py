@@ -275,13 +275,31 @@ def build_frontend() -> bool:
         log("Frontend dist/ not found. Building...")
         return run_npm_build()
 
-    # Check if source is newer than dist
+    # Compare the newest source file under frontend/src/ against the newest file
+    # in the build. The dist/ *directory* mtime is not reliable: replacing a file
+    # in place leaves the directory mtime untouched, so a stale build would look
+    # fresh. The source scan must exclude dist/ and node_modules.
     try:
+        src_root = FRONTEND_DIR / "src"
+        src_files = (
+            src_root.rglob("*")
+            if src_root.is_dir()
+            else FRONTEND_DIR.rglob("*")
+        )
         src_mtime = max(
-            (f.stat().st_mtime for f in FRONTEND_DIR.rglob("*") if f.is_file() and "node_modules" not in f.parts),
+            (
+                f.stat().st_mtime
+                for f in src_files
+                if f.is_file()
+                and "node_modules" not in f.parts
+                and "dist" not in f.relative_to(FRONTEND_DIR).parts
+            ),
             default=0
         )
-        dist_mtime = FRONTEND_DIST.stat().st_mtime
+        dist_mtime = max(
+            (f.stat().st_mtime for f in FRONTEND_DIST.rglob("*") if f.is_file()),
+            default=0
+        )
         if src_mtime > dist_mtime:
             log("Frontend source is newer than dist/. Rebuilding...")
             return run_npm_build()

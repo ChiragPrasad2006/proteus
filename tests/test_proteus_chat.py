@@ -165,6 +165,32 @@ class NameResolutionTests(_ChatTestBase):
         self.assertIn("candidates", to_resolutions[0])
         self.assertEqual(to_resolutions[0]["candidates"], [])
 
+    def test_duplicate_recipient_mentions_resolve_to_a_single_recipient(self) -> None:
+        """The same recipient named twice must yield one resolution and one To address."""
+        account_id = self._create_account("chirag@expano.in", "Chirag Sharma")
+        self._seed_contacts(account_id, [_MANU])
+
+        # The intent parser can name one recipient in two forms ("manu" and the
+        # resolved address). Both must collapse to a single resolution.
+        duplicate_parse = {
+            "action": "send",
+            "to_names": ["manu", "manu@expano.in"],
+            "cc_names": [],
+            "bcc_names": [],
+            "subject_hint": "Roadmap",
+            "intent_bullets": "share the roadmap",
+            "source": "test",
+        }
+        with patch("backend.main._parse_chat_intent", return_value=duplicate_parse):
+            turn = self._turn(account_id, "send an email to manu about the roadmap")
+
+        to_resolutions = turn["resolutions"]["to"]
+        self.assertEqual(len(to_resolutions), 1, to_resolutions)
+        self.assertEqual(to_resolutions[0]["status"], "MATCHED")
+        self.assertEqual(to_resolutions[0]["matched_email"], "manu@expano.in")
+        self.assertIsNotNone(turn["draft_card"])
+        self.assertEqual(turn["draft_card"]["to"], ["manu@expano.in"])
+
     def test_chat_turn_ambiguous_first_name_requests_clarification(self) -> None:
         account_id = self._create_account("chirag@expano.in", "Chirag Sharma")
         self._seed_contacts(account_id, [

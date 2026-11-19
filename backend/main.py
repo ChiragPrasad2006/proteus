@@ -1448,11 +1448,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 resolutions=_schemas(resolution_lists),
             )
 
-        def _unique_preserve_order(items: list[str]) -> list[str]:
-            return list(dict.fromkeys(items))
-        to_emails = _unique_preserve_order([r.matched.email for r in to_res if r.matched])
-        cc_emails = _unique_preserve_order([r.matched.email for r in cc_res if r.matched])
-        bcc_emails = _unique_preserve_order([r.matched.email for r in bcc_res if r.matched])
+        to_emails = [r.matched.email for r in to_res if r.matched]
+        cc_emails = [r.matched.email for r in cc_res if r.matched]
+        bcc_emails = [r.matched.email for r in bcc_res if r.matched]
 
         # Tier 4: first-recipient gate.
         review_reasons: list[str] = []
@@ -1578,7 +1576,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "bcc": bcc_emails,
                             "subject": subject,
                             "intent_bullets": parsed["intent_bullets"],
-                            "provider": "demo",
+                            "provider": account.provider,
                             "thread_id": None,
                             "in_reply_to": None,
                             "session_id": session_id,

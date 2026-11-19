@@ -181,6 +181,107 @@ class GmailAppPasswordSMTPTests(unittest.TestCase):
             assert updated_card is not None
             self.assertEqual(updated_card["status"], "SENT")
 
+    def test_chat_staged_draft_is_approved_through_smtp_not_demo_outbox(self) -> None:
+        """A draft created in chat must be sent over SMTP when the account uses an App Password."""
+        target = "kamisama7892@gmail.com"
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Settings(local_user_data_dir=Path(directory), profiler_mode="heuristic")
+            app = create_app(settings=settings)
+            client = TestClient(app)
+            account = app.state.account_manager.create_account(target, "Self Test")
+            account_settings = settings.for_account(account.account_id)
+            store = ProfileStore(account_settings)
+            profile = UserStyleProfile(
+                profile_id="profile-chat-smtp",
+                created_at=datetime.now(timezone.utc),
+                deterministic_stylometry=StylometryMetrics(),
+                global_style_card=GlobalStyleCard(
+                    formality="casual",
+                    tone="direct",
+                    directness="balanced",
+                    vocabulary_level="standard-professional",
+                    sentence_structure="warm & conversational",
+                    formatting_preferences=[],
+                    characteristic_phrases=[],
+                    source="heuristic",
+                    sampled_email_count=0,
+                ),
+                corpus_statistics=CorpusStatistics(total_sent_emails=0, clean_emails_retained=0),
+            )
+            store.save_profile(profile)
+            secret_path = account_settings.local_user_data_dir / "app_password.bin"
+            secret_path.write_text(
+                protect_secret("abcdefghijklmnop", account_settings.local_user_data_dir),
+                encoding="utf-8",
+            )
+            app.state.account_manager.update_account(account.account_id, mailbox_connected=True)
+
+            # Seed the recipient so the chat turn resolves a concrete address.
+            from backend.automation.contact_resolver import Contact, ContactResolver
+
+            resolver = ContactResolver(account_settings.contacts_path)
+            resolver.upsert_contact(Contact(email=target, full_name="Kamisama"))
+
+            session = client.post(
+                "/api/chat/sessions",
+                headers={"X-Account-ID": account.account_id},
+                json={"title": "SMTP chat draft"},
+            ).json()
+
+            sent: dict[str, object] = {}
+
+            class FakeSMTP:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    return False
+
+                def login(self, username: str, password: str) -> None:
+                    sent["login"] = (username, password)
+
+                def send_message(self, message, *, from_addr: str, to_addrs: list[str]) -> None:
+                    sent["message"] = message
+                    sent["from_addr"] = from_addr
+                    sent["to_addrs"] = to_addrs
+
+            with (
+                patch("backend.connectors.gmail_app_password.smtplib.SMTP_SSL", return_value=FakeSMTP()) as smtp_ssl,
+                patch("backend.retrieval.embedder.LocalEmbedder.load", return_value=None),
+                patch("backend.retrieval.vector_store.LanceDBVectorStore.upsert_sent_email", return_value=None),
+                patch("backend.generation.drafter.QwenDrafter.generate_draft", return_value="Hi,\n\nDraft body."),
+            ):
+                turn = client.post(
+                    "/api/chat/turn",
+                    headers={"X-Account-ID": account.account_id},
+                    json={
+                        "session_id": session["session_id"],
+                        "user_message": f"send an email to {target} about the release",
+                    },
+                )
+                self.assertEqual(turn.status_code, 200, turn.text)
+                self.assertEqual(turn.json()["status"], "PENDING_REVIEW")
+                draft_id = turn.json()["draft_card"]["draft_id"]
+                self.assertTrue(draft_id)
+
+                staged = store.load_pending_draft(draft_id)
+                self.assertIsNotNone(staged)
+                assert staged is not None
+                self.assertEqual(staged["request"]["provider"], "gmail")
+
+                approved = client.post(
+                    "/api/email/approve-and-learn",
+                    headers={"X-Account-ID": account.account_id},
+                    json={"draft_id": draft_id, "final_subject": "Release", "final_body": "Hi,\n\nDraft body."},
+                )
+
+            self.assertEqual(approved.status_code, 200, approved.text)
+            self.assertEqual(approved.json()["status"], "SENT", approved.text)
+            smtp_ssl.assert_called_once_with("smtp.gmail.com", 465)
+            self.assertEqual(sent["to_addrs"], [target])
+            self.assertEqual(sent["from_addr"], target)
+            self.assertIsNone(store.load_pending_draft(draft_id))
+
 
 if __name__ == "__main__":
     unittest.main()

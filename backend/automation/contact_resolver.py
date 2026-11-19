@@ -385,4 +385,28 @@ class ContactResolver:
         return Resolution(query=query, status="MATCHED", matched=top)
 
     def resolve_many(self, names: Iterable[str]) -> list[Resolution]:
-        return [self.resolve(name) for name in names if (name or "").strip()]
+        """Resolve each name, collapsing names that point at the same contact.
+
+        A single recipient can be mentioned in several forms ("manu" and
+        "manu@expano.in"); those must resolve to one entry so the envelope
+        never lists the same person twice.
+        """
+        resolutions: list[Resolution] = []
+        seen_emails: set[str] = set()
+        seen_queries: set[str] = set()
+        for name in names:
+            if not (name or "").strip():
+                continue
+            resolution = self.resolve(name)
+            if resolution.status == "MATCHED" and resolution.matched is not None:
+                email = resolution.matched.email.lower()
+                if email in seen_emails:
+                    continue
+                seen_emails.add(email)
+            else:
+                query = resolution.query.strip().lower()
+                if query in seen_queries:
+                    continue
+                seen_queries.add(query)
+            resolutions.append(resolution)
+        return resolutions
