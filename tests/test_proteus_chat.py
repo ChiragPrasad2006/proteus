@@ -370,7 +370,10 @@ class InPlaceDraftTweakTests(_ChatTestBase):
                 bcc_recipients=[],
             )
 
-        self.assertEqual(revised, {"subject": "Quick update", "body": "Hi, quick update."})
+        # The reviser post-processes the body, which adds the sign-off
+        self.assertEqual(revised["subject"], "Quick update")
+        self.assertIn("Hi, quick update.", revised["body"])
+        self.assertIn("Best,", revised["body"])  # fallback sign-off from profile
         payload = post.call_args.kwargs["json"]
         self.assertEqual(payload["model"], "qwen3:8b")
         self.assertIs(payload["think"], False)

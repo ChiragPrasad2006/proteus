@@ -394,6 +394,7 @@ class ChatSessionSummary(StrictModel):
     created_at: str
     updated_at: str
     message_count: int = 0
+    pending_clarification: dict[str, Any] = {}
 
 
 class ChatSessionListResponse(StrictModel):

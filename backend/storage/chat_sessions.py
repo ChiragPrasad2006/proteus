@@ -44,7 +44,8 @@ class ChatSessionStore:
                     title TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    message_count INTEGER NOT NULL DEFAULT 0
+                    message_count INTEGER NOT NULL DEFAULT 0,
+                    pending_clarification_json TEXT NOT NULL DEFAULT '{}'
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     message_id TEXT PRIMARY KEY,
@@ -115,6 +116,8 @@ class ChatSessionStore:
 
     @staticmethod
     def _session_row(row: sqlite3.Row) -> dict[str, Any]:
+        import json
+        pending = row["pending_clarification_json"] if "pending_clarification_json" in row.keys() else "{}"
         return {
             "session_id": row["session_id"],
             "account_id": row["account_id"],
@@ -122,6 +125,7 @@ class ChatSessionStore:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "message_count": row["message_count"],
+            "pending_clarification": json.loads(pending or "{}"),
         }
 
     def list_sessions(self, account_id: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -200,6 +204,56 @@ class ChatSessionStore:
             }
             for row in rows
         ]
+
+    def get_recent_messages(self, session_id: str, limit: int = 8) -> list[dict[str, Any]]:
+        """Return the last ``limit`` messages for conversation context."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM messages WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (session_id, limit),
+            ).fetchall()
+        # Return in chronological order (oldest first)
+        rows = list(reversed(rows))
+        return [
+            {
+                "message_id": row["message_id"],
+                "session_id": row["session_id"],
+                "role": row["role"],
+                "content": row["content"],
+                "created_at": row["created_at"],
+                "metadata": json.loads(row["metadata_json"] or "{}"),
+            }
+            for row in rows
+        ]
+
+    def set_pending_clarification(self, session_id: str, payload: dict[str, Any]) -> None:
+        """Persist a pending clarification payload on the session."""
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE sessions SET pending_clarification_json = ?, updated_at = ? WHERE session_id = ?",
+                (json.dumps(payload), _now(), session_id),
+            )
+
+    def get_pending_clarification(self, session_id: str) -> dict[str, Any] | None:
+        """Load the pending clarification payload for a session, if any."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT pending_clarification_json FROM sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if row and row["pending_clarification_json"]:
+            import json
+            payload = json.loads(row["pending_clarification_json"])
+            return payload if payload else None
+        return None
+
+    def clear_pending_clarification(self, session_id: str) -> None:
+        """Clear the pending clarification payload for a session."""
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE sessions SET pending_clarification_json = '{}', updated_at = ? WHERE session_id = ?",
+                (_now(), session_id),
+            )
 
     # --- draft cards --------------------------------------------------------
     def upsert_draft_card(

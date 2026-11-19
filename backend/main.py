@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.automation import Dispatcher, StyleLearner
-from backend.automation.contact_resolver import ContactResolver
+from backend.automation.contact_resolver import Contact, ContactResolver
 from backend.config import Settings
 from backend.connectors import (
     ConnectorError,
@@ -278,6 +278,15 @@ def _heuristic_intent(user_message: str, gazetteer: dict[str, list[str]] | None 
             if m.group(1).strip().lower() not in _NAME_STOPWORDS
         ][:1]
 
+    # Fallback: extract bare email addresses from the message if no recipients found
+    if not (to_names or cc_names or bcc_names):
+        email_matches = _EMAIL_RE.findall(text)
+        for email in email_matches:
+            # Clean up any angle brackets
+            clean_email = email.strip("<>").lower()
+            if clean_email and clean_email not in to_names:
+                to_names.append(clean_email)
+
     subject_match = re.search(r"subject[:\s]+([^\n]+)", text, re.IGNORECASE)
     subject_hint = subject_match.group(1).strip().strip("\"'") if subject_match else ""
 
@@ -303,11 +312,24 @@ def _parse_chat_intent(
     user_message: str,
     contact_names: list[str],
     gazetteer: dict[str, list[str]] | None = None,
+    conversation_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Parse a natural-language turn with qwen3:8b, falling back to heuristics."""
     endpoint = f"{settings.ollama_url.rstrip('/')}/api/chat"
     hints = ", ".join(sorted({name for name in contact_names if name})[:60])
-    user_content = f"Known contacts (reference only): {hints}\n\nUser request:\n{user_message}"
+    
+    # Build user content with conversation history for multi-turn context
+    if conversation_history:
+        history_lines = []
+        for msg in conversation_history[-8:]:  # Last 8 messages max
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role in ("user", "assistant") and content:
+                history_lines.append(f"{role.capitalize()}: {content}")
+        history_text = "\n".join(history_lines)
+        user_content = f"Known contacts (reference only): {hints}\n\nConversation history:\n{history_text}\n\nCurrent request:\n{user_message}"
+    else:
+        user_content = f"Known contacts (reference only): {hints}\n\nUser request:\n{user_message}"
 
     parsed: dict[str, Any] | None = None
     try:
@@ -333,7 +355,7 @@ def _parse_chat_intent(
         )
         if response.status_code == 200:
             content = response.json().get("message", {}).get("content", "")
-            content = re.sub(r" thinking.*?</think>", "", content, flags=re.DOTALL).strip()
+            content = re.sub(r" thinking.*?\*/", "", content, flags=re.DOTALL).strip()
             content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content).strip()
             parsed = _normalize_intent(json.loads(content))
     except Exception:
@@ -345,7 +367,6 @@ def _parse_chat_intent(
     else:
         parsed["source"] = "ollama"
     return parsed
-
 
 def _fallback_draft(profile: UserStyleProfile, primary_name: str, intent_bullets: str) -> str:
     """Deterministic, clearly-labelled skeleton used only when the model is offline."""
@@ -377,6 +398,44 @@ def _resolve_primary_name(resolution_list: list[Any]) -> str:
         if matched is not None:
             return matched.full_name or matched.email
     return ""
+
+
+def _extract_email_from_clarification(text: str) -> tuple[str | None, str | None]:
+    """Extract name->email mapping from a clarification response.
+    
+    Returns (name, email) if found, else (None, None).
+    Handles patterns like:
+    - "jatin's email is jatin@example.com"
+    - "the email of jatin is jatin@example.com"
+    - "jatin: jatin@example.com"
+    - "jatin@example.com" (bare email)
+    """
+    import re
+    text_lower = text.strip().lower()
+    
+    # Pattern 1: "name's email is email@domain" or "email of name is email@domain"
+    patterns = [
+        r"(\w+(?:\s+\w+)?)\s*(?:email|address)\s*(?:is|=)\s*([^\s]+@[^\s]+\.[^\s]+)",
+        r"email\s+(?:of|for)\s+(\w+(?:\s+\w+)?)\s*(?:is|=)\s*([^\s]+@[^\s]+\.[^\s]+)",
+        r"(\w+(?:\s+\w+)?)\s*[:=]\s*([^\s]+@[^\s]+\.[^\s]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            name = match.group(1).strip()
+            email = match.group(2).strip().lower()
+            return name, email
+    
+    # Pattern 2: Bare email address (if it's the only thing or looks like a direct answer)
+    email_match = re.search(r"([^\s]+@[^\s]+\.[^\s]+)", text)
+    if email_match:
+        email = email_match.group(1).strip().lower()
+        # Try to infer name from local part
+        local = email.split("@")[0]
+        name = local.replace(".", " ").replace("_", " ").replace("-", " ").title()
+        return name, email
+    
+    return None, None
 
 
 def _gpu_status() -> dict[str, Any]:
@@ -1336,7 +1395,88 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             session = sessions.create_session(account.account_id, title=request.user_message[:60])
         session_id = session["session_id"]
-        sessions.append_message(session_id, "user", request.user_message)
+
+        # Check for pending clarification FIRST, before appending the user message
+        pending_clarification = sessions.get_pending_clarification(session_id)
+        if pending_clarification:
+            # User is responding to a clarification request - try to extract email mapping
+            name, email = _extract_email_from_clarification(request.user_message)
+            if name and email:
+                # Upsert the new contact into the account's contacts registry
+                resolver = ContactResolver(acc_settings.contacts_path)
+                try:
+                    if resolver.is_empty():
+                        resolver.rebuild_from_emails(store.load_cleaned_emails())
+                except Exception:
+                    pass
+                
+                contact = Contact(
+                    email=email.lower(),
+                    full_name=name.title(),
+                    first_name=name.split()[0] if name.split() else "",
+                    last_name=name.split()[-1] if len(name.split()) > 1 else "",
+                    company_domain=email.split("@")[-1] if "@" in email else "",
+                    interaction_count=0,
+                    last_seen="",
+                )
+                resolver.upsert_contact(contact)
+
+                # Merge the resolved contact into the pending clarification payload
+                unresolved_names = pending_clarification.get("unresolved_names", [])
+                resolved_to = pending_clarification.get("to", [])
+                resolved_cc = pending_clarification.get("cc", [])
+                resolved_bcc = pending_clarification.get("bcc", [])
+
+                # Add the newly resolved email to the appropriate recipient list
+                # Determine which field the unresolved name was for
+                target_field = pending_clarification.get("target_field", "to")
+                if target_field == "to":
+                    resolved_to.append(email.lower())
+                elif target_field == "cc":
+                    resolved_cc.append(email.lower())
+                elif target_field == "bcc":
+                    resolved_bcc.append(email.lower())
+
+                # Clear pending clarification
+                sessions.clear_pending_clarification(session_id)
+
+                # Now proceed with the merged intent to generate the draft immediately
+                # Use the stored intent_bullets, subject_hint, and action from pending_clarification
+                parsed = {
+                    "action": pending_clarification.get("action", "send"),
+                    "to_names": resolved_to,
+                    "cc_names": resolved_cc,
+                    "bcc_names": resolved_bcc,
+                    "subject_hint": pending_clarification.get("subject_hint", ""),
+                    "intent_bullets": pending_clarification.get("intent_bullets", ""),
+                    "source": "clarification_resolved",
+                }
+
+                # Append user message and assistant response for this clarification turn
+                sessions.append_message(session_id, "user", request.user_message)
+                sessions.append_message(
+                    session_id,
+                    "assistant",
+                    f"Got it — saved {name} <{email}>. Generating your draft now.",
+                    metadata={"status": "CLARIFICATION_RESOLVED"},
+                )
+
+                # Continue to resolution and drafting below with the merged parsed intent
+            else:
+                # Could not extract email - append message and re-ask
+                sessions.append_message(session_id, "user", request.user_message)
+                message = "I couldn't extract an email address from your response. Please provide the email address (e.g., 'jatin@example.com' or 'jatin's email is jatin@example.com')."
+                sessions.append_message(session_id, "assistant", message, metadata={"status": "NEEDS_CLARIFICATION"})
+                return ChatTurnResponse(
+                    session_id=session_id,
+                    status="NEEDS_CLARIFICATION",
+                    assistant_message=message,
+                    parsed={},
+                    resolutions={},
+                )
+        else:
+            # No pending clarification - normal flow
+            sessions.append_message(session_id, "user", request.user_message)
 
         pending_draft_id = sessions.latest_pending_draft_id(session_id)
         if pending_draft_id and _looks_like_draft_tweak(request.user_message):
@@ -1386,11 +1526,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             pass
 
+        # Load recent conversation history for multi-turn context (last 8 messages)
+        recent_messages = sessions.get_recent_messages(session_id, limit=8)
+
         parsed = _parse_chat_intent(
             acc_settings,
             request.user_message,
             resolver.contact_names(),
             _build_contact_gazetteer(resolver),
+            conversation_history=recent_messages,
         )
 
         to_res = resolver.resolve_many(parsed["to_names"])
@@ -1428,6 +1572,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         unresolved = [r for r in (to_res + cc_res + bcc_res) if r.status != "MATCHED"]
         if unresolved:
             lines: list[str] = []
+            # Determine which field the first unresolved name belongs to
+            target_field = "to"
+            first_unresolved = unresolved[0]
+            if first_unresolved in cc_res:
+                target_field = "cc"
+            elif first_unresolved in bcc_res:
+                target_field = "bcc"
+
             for resolution in unresolved:
                 if resolution.candidates:
                     options = ", ".join(
@@ -1440,6 +1592,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     )
             message = "I need clarification before drafting:\n" + "\n".join(lines)
             sessions.append_message(session_id, "assistant", message, metadata={"status": "NEEDS_CLARIFICATION"})
+
+            # Persist pending clarification payload
+            pending_payload = {
+                "action": parsed.get("action", "send"),
+                "intent_bullets": parsed.get("intent_bullets", ""),
+                "subject_hint": parsed.get("subject_hint", ""),
+                "unresolved_names": [r.query for r in unresolved],
+                "target_field": target_field,
+                "to": [r.matched.email for r in to_res if r.matched],
+                "cc": [r.matched.email for r in cc_res if r.matched],
+                "bcc": [r.matched.email for r in bcc_res if r.matched],
+            }
+            sessions.set_pending_clarification(session_id, pending_payload)
+
             return ChatTurnResponse(
                 session_id=session_id,
                 status="NEEDS_CLARIFICATION",

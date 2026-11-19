@@ -28,7 +28,11 @@ class DrafterUnavailable(RuntimeError):
 class QwenDrafter:
     """Generate personalized email drafts using local Qwen3-8B model with audience topology."""
 
-    SYSTEM_PROMPT_TEMPLATE = """You are a personalized email writer. Adopt the persona and style profile provided in the prompt, write concise, high-impact emails, and avoid corporate AI clichés (such as 'I hope this email finds you well', 'delve', 'tapestry', 'furthermore')."""
+    SYSTEM_PROMPT_TEMPLATE = """You are a personalized email writer. Adopt the persona and style profile provided in the prompt, write concise, high-impact emails, and avoid corporate AI clichés (such as 'I hope this email finds you well', 'delve', 'tapestry', 'furthermore').
+
+Write plain-text human emails ONLY. Never use Markdown formatting (**bold**, *italics*, ### headings, code blocks).
+
+Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NEVER copy facts, metrics, severity scores, SLA hours, or unrelated details from reference emails or templates."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -57,6 +61,35 @@ class QwenDrafter:
             "exported_transformers_model_available": exported_hf,
             "profiler_mode": self.settings.profiler_mode,
         }
+
+    def _resolve_first_name(self, recipient_email: str, recipient_profiles: dict[str, RecipientProfile] | None) -> str:
+        """Resolve the recipient's first name from profile or derive from email local-part.
+        
+        Returns a clean first name if clearly alphabetic; empty string if unknown (like kamisama7892@gmail.com).
+        """
+        if not recipient_email:
+            return ""
+        
+        # Try to get from recipient profile first
+        if recipient_profiles:
+            profile = recipient_profiles.get(recipient_email.lower())
+            if profile and profile.preferred_greeting:
+                # Extract name from preferred greeting like "Hi Jatin," or "Hello Jatin"
+                match = re.search(r"(?:hi|hello|dear)\s+([A-Za-z]+)", profile.preferred_greeting, re.IGNORECASE)
+                if match:
+                    return match.group(1).strip()
+        
+        # Derive from email local-part, but only if clearly alphabetic
+        local = recipient_email.split("@")[0] if "@" in recipient_email else recipient_email
+        # Split on common separators and take the first token
+        for separator in (".", "_", "-", "+"):
+            local = local.split(separator)[0]
+        
+        # Only return if it looks like a real name (alphabetic, reasonable length)
+        if local.isalpha() and 2 <= len(local) <= 20:
+            return local.capitalize()
+        
+        return ""
 
     def _format_style_profile(self, profile: UserStyleProfile) -> str:
         """Format the user's style profile for the system prompt."""
@@ -131,7 +164,7 @@ class QwenDrafter:
             for cc in cc_recipients:
                 parts.append(f"  - {cc}")
             parts.append(
-                "INSTRUCTION: Visible CC recipients are present—write for a shared multi-stakeholder audience "
+                "INSTRUCTION: Visible CC recipients are present\u2014write for a shared multi-stakeholder audience "
                 "rather than a private 1-on-1 exchange; keep context self-contained and avoid private shorthand."
             )
         else:
@@ -149,7 +182,7 @@ class QwenDrafter:
         return "\n".join(parts)
 
     def _format_reference_examples(self, examples: list[dict[str, Any]]) -> str:
-        """Format retrieved few-shot examples for the prompt."""
+        """Format retrieved few-shot examples for the prompt as STYLE-ONLY examples."""
         if not examples:
             return "No reference examples available."
 
@@ -161,11 +194,12 @@ class QwenDrafter:
             subject = ex.get("subject", "")
             audience_mode = ex.get("audience_mode", "1on1_private")
             formatted.append(
-                f"Reference Example {i} (to {ex.get('recipient_email', 'unknown')} [{audience_mode}]):\n"
+                f"=== STYLE-ONLY EXAMPLE {i} (to {ex.get('recipient_email', 'unknown')} [{audience_mode}]) ===\n"
                 f"Subject: {subject}\n"
                 f"Body: {body}\n"
                 f"Greeting: {greeting}\n"
-                f"Sign-off: {signoff}"
+                f"Sign-off: {signoff}\n"
+                f"[USE THIS EXAMPLE ONLY FOR TONE, GREETING STYLE, AND SIGN-OFF PATTERN. DO NOT COPY FACTS, METRICS, OR CONTENT.]"
             )
         return "\n\n".join(formatted)
 
@@ -177,6 +211,7 @@ class QwenDrafter:
         cc_recipients: list[str],
         bcc_recipients: list[str],
         recipient_profiles: dict[str, RecipientProfile] | None = None,
+        first_name: str = "",
     ) -> str:
         """Build the complete system prompt with style profile, audience topology, and reference examples."""
         style_text = self._format_style_profile(profile)
@@ -188,11 +223,25 @@ class QwenDrafter:
         audience_topology = self._format_audience_topology(to_recipients, cc_recipients, bcc_recipients, profile)
         examples_text = self._format_reference_examples(examples)
 
+        # Resolve greeting with first_name
+        greeting_instruction = ""
+        if profile.deterministic_stylometry.top_greetings:
+            top_greeting = profile.deterministic_stylometry.top_greetings[0].pattern
+            if "{first_name}" in top_greeting:
+                resolved_greeting = top_greeting.replace("{first_name}", first_name) if first_name else top_greeting.replace("{first_name}", "").strip()
+                # Clean up any double spaces or trailing commas
+                resolved_greeting = re.sub(r"\s+", " ", resolved_greeting).strip()
+                resolved_greeting = re.sub(r",\s*,", ",", resolved_greeting)
+                greeting_instruction = f"\nPRIMARY GREETING TO USE: {resolved_greeting}"
+            else:
+                greeting_instruction = f"\nPRIMARY GREETING TO USE: {top_greeting}"
+
         return (
             f"{self.SYSTEM_PROMPT_TEMPLATE}\n\n"
             f"=== USER STYLE PROFILE ===\n{style_text}\n\n"
             f"{audience_topology}\n\n"
-            f"=== REFERENCE EXAMPLES FROM USER'S PAST SENT EMAILS ===\n{examples_text}"
+            f"=== REFERENCE EXAMPLES FROM USER'S PAST SENT EMAILS (STYLE ONLY) ===\n{examples_text}"
+            f"{greeting_instruction}"
         )
 
     def _build_user_prompt(
@@ -224,23 +273,85 @@ class QwenDrafter:
         return cleaned.strip()
 
     def _post_process_draft(self, draft: str, profile: UserStyleProfile) -> str:
-        """Clean up the draft and ensure it respects the user's sign-off habit."""
+        """Clean up the draft: strip placeholders, markdown, leading Subject:, and deduplicate sign-off."""
+        # Remove special tokens
         draft = re.sub(r"<\|im_end\|>", "", draft)
         draft = re.sub(r"<\|im_start\|>", "", draft)
         draft = re.sub(r"<\|.*?\|>", "", draft)
 
+        # Strip leading "Subject:" line if present
+        lines = draft.splitlines()
+        while lines and lines[0].strip().lower().startswith("subject:"):
+            lines.pop(0)
+        # Also strip any leading blank lines after subject removal
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        draft = "\n".join(lines)
+
+        # Strip markdown bold/heading markers
+        draft = re.sub(r"\*\*(.+?)\*\*", r"\1", draft)  # **bold** -> bold
+        draft = re.sub(r"^#{1,6}\s*(.+)$", r"\1", draft, flags=re.MULTILINE)  # ### heading -> heading
+        draft = re.sub(r"`(.+?)`", r"\1", draft)  # `code` -> code
+
+        # Strip common placeholders
+        placeholders = [
+            r"\{first_name\}",
+            r"\[Name\]",
+            r"\[Recipient\]",
+            r"\(date if known\)",
+            r"\[Date\]",
+            r"\{date\}",
+        ]
+        for ph in placeholders:
+            draft = re.sub(ph, "", draft, flags=re.IGNORECASE)
+
+        # Deduplicate sign-off
         exact_signoff = profile.deterministic_stylometry.exact_signoff
         if exact_signoff:
             lines = draft.rstrip().splitlines()
+            # Remove any existing closing phrases at the end (check last few lines as a block)
+            closing_phrases = ("regards", "best", "thanks", "cheers", "sincerely", "respectfully", "kind regards", "warm regards")
+            
+            # Keep removing trailing lines that look like closing phrases or names following them
+            # We need to check from the end backwards for sign-off blocks
+            i = len(lines) - 1
+            while i >= 0:
+                line = lines[i].strip().lower()
+                if any(line.startswith(s) for s in closing_phrases):
+                    # Found a closing phrase - remove this line and potentially the next one (name)
+                    lines.pop(i)
+                    # After removing closing phrase, check if the new last line (which was the next line)
+                    # looks like a name - if so, remove it too
+                    if i < len(lines):
+                        next_line = lines[i].strip()
+                        if next_line and not any(next_line.lower().startswith(s) for s in closing_phrases):
+                            # Heuristic: if it's short and looks like a name, remove it
+                            if len(next_line) <= 40 and re.match(r"^[A-Za-z\s\.\-']+$", next_line):
+                                lines.pop(i)
+                    i -= 1  # Continue checking earlier lines
+                else:
+                    i -= 1
+            
+            # Now check if the exact_signoff is already present at the end (as a block)
+            draft_wo_trailing = "\n".join(lines).rstrip()
+            if not draft_wo_trailing.endswith(exact_signoff.rstrip()):
+                draft = draft_wo_trailing + "\n\n" + exact_signoff
+            else:
+                draft = draft_wo_trailing
+        else:
+            # No exact_signoff defined, just remove trailing closing phrases
+            lines = draft.rstrip().splitlines()
+            closing_phrases = ("regards", "best", "thanks", "cheers", "sincerely", "respectfully", "kind regards", "warm regards")
             while lines and lines[-1].strip():
                 last = lines[-1].strip().lower()
-                if any(last.startswith(s) for s in ("best", "regards", "thanks", "cheers", "sincerely", "respectfully")):
+                if any(last.startswith(s) for s in closing_phrases):
                     lines.pop()
                 else:
                     break
             draft = "\n".join(lines).rstrip()
-            if not draft.endswith(exact_signoff):
-                draft = draft + "\n\n" + exact_signoff
+
+        # Collapse multiple consecutive blank lines to at most 2
+        draft = re.sub(r"\n{3,}", "\n\n", draft)
 
         return draft.strip()
 
@@ -260,6 +371,9 @@ class QwenDrafter:
         to_recipients = [recipient_email] if recipient_email else []
         cc_recipients = cc_recipients or []
         bcc_recipients = bcc_recipients or []
+
+        # Resolve first_name for greeting
+        first_name = self._resolve_first_name(recipient_email or "", recipient_profiles or {})
 
         # Retrieve few-shot examples
         query_text = " ".join([incoming_context or "", intent_bullets]).strip()
@@ -285,7 +399,7 @@ class QwenDrafter:
 
         # Build prompts with audience topology
         system_prompt = self._build_system_prompt(
-            profile, examples, to_recipients, cc_recipients, bcc_recipients, recipient_profiles
+            profile, examples, to_recipients, cc_recipients, bcc_recipients, recipient_profiles, first_name
         )
         user_prompt = self._build_user_prompt(intent_bullets, incoming_context)
 
@@ -334,6 +448,7 @@ class QwenDrafter:
             "You revise an existing email draft. Apply only the user's requested tone/content change. "
             "Preserve facts, commitments, dates, recipients, and audience topology. Do not add boilerplate, "
             "SLA/severity blocks, new claims, or unrelated content. Return only JSON with string keys subject and body.\n\n"
+            "Write plain-text human emails ONLY. Never use Markdown formatting (**bold**, *italics*, ### headings, code blocks).\n\n"
             f"USER STYLE PROFILE:\n{self._format_style_profile(profile)}"
         )
         user_prompt = (
@@ -365,7 +480,7 @@ class QwenDrafter:
                     continue
                 response.raise_for_status()
                 content = response.json().get("message", {}).get("content", "")
-                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                content = re.sub(r"thinking.*?\*/", "", content, flags=re.DOTALL).strip()
                 start, end = content.find("{"), content.rfind("}")
                 if start < 0 or end < start:
                     raise ValueError("Model response did not contain a JSON object.")
@@ -374,6 +489,8 @@ class QwenDrafter:
                 revised_body = revised.get("body")
                 if not isinstance(revised_subject, str) or not isinstance(revised_body, str):
                     raise ValueError("Model response must contain string subject and body fields.")
+                # Post-process the revised body too
+                revised_body = self._post_process_draft(revised_body, profile)
                 return {"subject": revised_subject.strip(), "body": revised_body.strip()}
             except (httpx.HTTPError, ValueError, TypeError) as exc:
                 last_error = str(exc)
@@ -429,9 +546,9 @@ class QwenDrafter:
         content = result.get("message", {}).get("content", "")
 
         # Strip thinking blocks if present (qwen3 thinking mode)
-        if think and "<think>" in content and "</think>" in content:
+        if think and "thinking" in content and "*/" in content:
             # Extract only the non-thinking part
-            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+            content = re.sub(r"thinking.*?\*/", "", content, flags=re.DOTALL).strip()
 
         if not content:
             raise DrafterUnavailable("Ollama returned empty response")
@@ -494,7 +611,7 @@ class QwenDrafter:
                 top_p=0.9,
                 do_sample=True,
                 repetition_penalty=1.1,
-                pad_token_id=tokenizer.eos_token_id,
+                pad_token_id=tokenizer.eol_token_id,
             )
 
         generated_ids = outputs[0][inputs["input_ids"].shape[1] :]

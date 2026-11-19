@@ -26,6 +26,11 @@ MATCH_THRESHOLD = 0.72
 # Two distinct contacts closer than this in score are treated as ambiguous.
 AMBIGUITY_MARGIN = 0.06
 
+# Valid email regex for immediate literal address acceptance
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Regex to extract email from display-name-wrapped format like "Name <email@domain>"
+_EMAIL_EXTRACT_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
 _LOCALPART_SPLIT = re.compile(r"[._\-+]+")
 
 
@@ -337,9 +342,45 @@ class ContactResolver:
         if not query:
             return Resolution(query=query, status="NEEDS_CLARIFICATION", reason="Empty recipient name.")
 
+        # Accept literal email addresses immediately -- never ask for clarification.
+        # First check if the query is a bare email or contains an email (e.g., "Name <email@domain>")
+        if _EMAIL_RE.fullmatch(query):
+            addr = query.lower()
+        else:
+            email_match = _EMAIL_EXTRACT_RE.search(query)
+            if email_match:
+                # Strip angle brackets if present (from "Name <email@domain>" format)
+                addr = email_match.group(0).strip("<>").lower()
+            else:
+                addr = None
+        
+        if addr:
+            if addr in self._cache:
+                return Resolution(query=query, status="MATCHED", matched=self._cache[addr])
+            # Not in registry yet, but it's a valid email -- return MATCHED with a minimal contact
+            # so the caller can proceed to draft without clarification.
+            local, _, domain = addr.partition("@")
+            first, last = _name_from_localpart(local)
+            full_name = " ".join(p for p in (first, last) if p).strip()
+            contact = Contact(
+                email=addr,
+                full_name=full_name,
+                first_name=first,
+                last_name=last,
+                company_domain=domain,
+                interaction_count=0,
+                last_seen="",
+            )
+            return Resolution(
+                query=query, 
+                status="MATCHED", 
+                matched=contact,
+                reason=f"Literal email address '{addr}' accepted (not yet in contacts registry)."
+            )
+
         lowered = query.lower()
 
-        # Direct address / local-part lookup.
+        # Direct address / local-part lookup (fallback for display-name-wrapped addresses).
         if "@" in query:
             _, addr = parseaddr(query)
             addr = (addr or query).split()[0].lower()
