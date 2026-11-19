@@ -1180,6 +1180,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         detail = ChatSessionStore(acc_settings.chat_sessions_path).get_session(session_id)
         if detail is None:
             raise HTTPException(status_code=404, detail="Session not found.")
+        for card in detail.get("draft_cards", []):
+            card.setdefault("warnings", [])
+            card.setdefault("retrieved_examples", [])
+            card.setdefault("model_used", "")
+            card.setdefault("review_reason", "")
         return ChatSessionDetailResponse(**detail)
 
     @app.post("/api/chat/turn", response_model=ChatTurnResponse)
@@ -1374,6 +1379,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status=status,
             draft_id=draft_id,
         )
+        card["warnings"] = [
+            {
+                "id": f"review-{index}",
+                "severity": "warning",
+                "title": "Review required",
+                "detail": reason,
+            }
+            for index, reason in enumerate(review_reasons)
+        ]
+        card["retrieved_examples"] = []
+        card["model_used"] = acc_settings.model_name or ""
+        card["review_reason"] = "; ".join(review_reasons)
 
         # If pending review, save to pending_drafts for approve-and-learn
         if not will_send and draft_id and draft_body:

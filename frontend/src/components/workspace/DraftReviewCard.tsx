@@ -33,7 +33,9 @@ function friendlyName(email: string): string {
     .join(' ')
 }
 
-const listToText = (list: string[]) => list.join(', ')
+const listToText = (list: unknown) => Array.isArray(list)
+  ? list.filter((item): item is string => typeof item === 'string').join(', ')
+  : ''
 const textToList = (text: string) =>
   text
     .split(',')
@@ -53,19 +55,22 @@ export function DraftReviewCard({
   onSave,
   onTweak,
 }: DraftReviewCardProps) {
-  const [to, setTo] = useState(listToText(draft.to))
-  const [cc, setCc] = useState(listToText(draft.cc))
-  const [bcc, setBcc] = useState(listToText(draft.bcc))
-  const [subject, setSubject] = useState(draft.subject)
-  const [body, setBody] = useState(draft.body)
+  const warnings = Array.isArray(draft?.warnings) ? draft.warnings : []
+  const status = typeof draft?.status === 'string' ? draft.status : 'DRAFT'
+  const retrievedExamples = Array.isArray(draft?.retrievedExamples) ? draft.retrievedExamples : []
+  const [to, setTo] = useState(listToText(draft?.to))
+  const [cc, setCc] = useState(listToText(draft?.cc))
+  const [bcc, setBcc] = useState(listToText(draft?.bcc))
+  const [subject, setSubject] = useState(typeof draft?.subject === 'string' ? draft.subject : '')
+  const [body, setBody] = useState(typeof draft?.body === 'string' ? draft.body : '')
   const [tweak, setTweak] = useState('')
   const [saved, setSaved] = useState(false)
 
   // Initialised once per draft identity — the thread keys this card by draft.id
   // so a fresh draft remounts with a clean editable copy (no effect needed).
 
-  const isPendingReview = draft.status === 'PENDING_REVIEW'
-  const isSent = draft.status === 'SENT'
+  const isPendingReview = status === 'PENDING_REVIEW'
+  const isSent = status === 'SENT'
 
   const current = useMemo<EmailDraft>(
     () => ({
@@ -73,6 +78,8 @@ export function DraftReviewCard({
       to: textToList(to),
       cc: textToList(cc),
       bcc: textToList(bcc),
+      warnings,
+      retrievedExamples,
       subject,
       body,
     }),
@@ -111,10 +118,10 @@ export function DraftReviewCard({
         </div>
         <div className="flex items-center gap-2">
           <Badge tone={isSent ? 'success' : isPendingReview ? 'warning' : 'neutral'}>
-            {draft.status.replace('_', ' ')}
+            {status.replace('_', ' ')}
           </Badge>
           <span className="hidden font-mono text-[10px] uppercase tracking-wider text-fg-faint sm:inline">
-            {draft.modelUsed}
+            {draft.modelUsed ?? ''}
           </span>
         </div>
       </div>
@@ -166,13 +173,13 @@ export function DraftReviewCard({
       </div>
 
       {/* Warnings */}
-      {draft.warnings.length > 0 ? (
+      {warnings.length > 0 ? (
         <ul className="space-y-2 px-6 pt-4">
-          {draft.warnings.map((w) => {
-            const s = SEVERITY_STYLE[w.severity]
+          {warnings.map((w, index) => {
+            const s = SEVERITY_STYLE[w.severity] ?? SEVERITY_STYLE.warning
             return (
               <li
-                key={w.id}
+                key={w.id || `warning-${index}`}
                 className={cn('flex items-start gap-3 rounded-2xl border px-4 py-3', s.ring)}
               >
                 <s.Icon className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', s.text)} strokeWidth={1.8} />

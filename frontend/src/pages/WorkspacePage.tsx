@@ -94,8 +94,9 @@ export function WorkspacePage() {
         createdAt: new Date().toISOString(),
         status: 'done',
         reasoning: data.parsed ? [source] : [],
-        contacts: [],
+        contacts: data.contacts,
         draft: data.draft_card || null,
+        clarification: data.clarification,
       })
     },
     onError: (err) => {

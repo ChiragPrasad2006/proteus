@@ -21,7 +21,8 @@ const HUE_BY_TIER: Record<RelationshipTier, string> = {
 }
 
 /** Horizontal strip of contacts the agent resolved from the local corpus. */
-export function ResolvedContactsStrip({ contacts }: { contacts: RecipientContact[] }) {
+export function ResolvedContactsStrip({ contacts: contactInput }: { contacts?: RecipientContact[] | null }) {
+  const contacts = Array.isArray(contactInput) ? contactInput : []
   if (contacts.length === 0) return null
 
   return (

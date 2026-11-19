@@ -15,6 +15,10 @@ downloads/
 eggs/
 .eggs/
 lib/
+# Keep frontend application helpers versioned; the generic Python rule above
+# must not hide frontend source code.
+!frontend/src/lib/
+!frontend/src/lib/*.ts
 lib64/
 parts/
 sdist/

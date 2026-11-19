@@ -39,14 +39,15 @@ export function MessageThread({
   onTweak,
 }: MessageThreadProps) {
   const endRef = useRef<HTMLDivElement>(null)
-  const last = messages[messages.length - 1]
+  const safeMessages = Array.isArray(messages) ? messages : []
+  const last = safeMessages[safeMessages.length - 1]
 
   // Pin to the newest content whenever the thread grows or an assistant turn settles.
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [messages.length, last?.id, last?.content, last?.draft?.id])
+  }, [safeMessages.length, last?.id, last?.content, last?.draft?.id])
 
-  if (messages.length === 0) {
+  if (safeMessages.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center px-6">
         <div className="flex max-w-sm flex-col items-center text-center">
@@ -68,7 +69,11 @@ export function MessageThread({
   return (
     <div className="scrollbar-none flex-1 overflow-y-auto">
       <div className="mx-auto flex max-w-3xl flex-col gap-7 px-4 py-8 lg:px-8">
-        {messages.map((message) => {
+        {safeMessages.map((message) => {
+          const reasoning = Array.isArray(message.reasoning) ? message.reasoning : []
+          const contacts = Array.isArray(message.contacts) ? message.contacts : []
+          const clarificationCandidates = Array.isArray(message.clarification?.candidates)
+            ? message.clarification.candidates : []
           if (message.role === 'user') {
             return (
               <div key={message.id} className="flex justify-end">
@@ -102,9 +107,9 @@ export function MessageThread({
                   <p className="text-[13.5px] leading-relaxed text-fg">{message.content}</p>
                 </div>
 
-                {message.reasoning && message.reasoning.length > 0 ? (
+                {reasoning.length > 0 ? (
                   <ul className="flex flex-col gap-1.5 rounded-2xl border border-hairline bg-white/[0.02] px-4 py-3">
-                    {message.reasoning.map((step, i) => (
+                    {reasoning.map((step, i) => (
                       <li
                         key={i}
                         className="flex items-start gap-2 font-mono text-[10.5px] leading-relaxed text-fg-faint"
@@ -125,10 +130,10 @@ export function MessageThread({
                       </span>
                     </div>
                     <p className="mb-3 text-[13px] leading-relaxed text-fg-muted">
-                      {message.clarification.prompt}
+                      {message.clarification?.prompt ?? ''}
                     </p>
                     <ul className="flex flex-col gap-1.5">
-                      {message.clarification.candidates.map((c) => (
+                      {clarificationCandidates.map((c) => (
                         <li key={c.id}>
                           <button
                             type="button"
@@ -161,8 +166,8 @@ export function MessageThread({
                   </div>
                 ) : null}
 
-                {message.contacts && message.contacts.length > 0 ? (
-                  <ResolvedContactsStrip contacts={message.contacts} />
+                {contacts.length > 0 ? (
+                  <ResolvedContactsStrip contacts={contacts} />
                 ) : null}
 
                 {message.draft ? (

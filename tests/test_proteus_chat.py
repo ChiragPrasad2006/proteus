@@ -130,10 +130,21 @@ class NameResolutionTests(_ChatTestBase):
         # A draft was produced and is addressed to the resolved recipients.
         card = turn["draft_card"]
         self.assertIsNotNone(card)
+        self.assertIsInstance(card.get("warnings"), list)
+        self.assertIsInstance(card.get("retrieved_examples"), list)
+        self.assertTrue(card.get("model_used"))
         self.assertTrue(card["body"].strip(), "draft body must not be empty")
         self.assertEqual(card["to"], ["manu@expano.in"])
         self.assertEqual(sorted(card["cc"]), ["chiranth@expano.in", "jatin@expano.in"])
         self.assertIn(card["status"], ("DRAFT", "PENDING_REVIEW", "SENT"))
+
+        detail = self.client.get(
+            f"/api/chat/sessions/{turn['session_id']}", headers={"X-Account-ID": account_id}
+        )
+        self.assertEqual(detail.status_code, 200, detail.text)
+        persisted_card = detail.json()["draft_cards"][0]
+        self.assertIsInstance(persisted_card["warnings"], list)
+        self.assertIsInstance(persisted_card["retrieved_examples"], list)
 
     def test_chat_turn_unknown_name_requests_clarification_with_candidates(self) -> None:
         account_id, _ = self._demo_seed_and_profile("chirag@expano.in")
