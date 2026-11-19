@@ -383,6 +383,7 @@ class ChatTurnResponse(StrictModel):
     resolutions: dict[str, list[ContactResolution]] = Field(default_factory=dict)
     draft_card: dict[str, Any] | None = None
     review_reason: str | None = None
+    session_title: str | None = None
 
 
 class ChatSessionSummary(StrictModel):
@@ -395,6 +396,7 @@ class ChatSessionSummary(StrictModel):
     updated_at: str
     message_count: int = 0
     pending_clarification: dict[str, Any] = {}
+    is_custom_title: bool = False
 
 
 class ChatSessionListResponse(StrictModel):
@@ -403,6 +405,10 @@ class ChatSessionListResponse(StrictModel):
 
 class ChatSessionCreateRequest(StrictModel):
     title: str = ""
+
+
+class ChatSessionRenameRequest(StrictModel):
+    title: str = Field(min_length=1, max_length=100)
 
 
 class ChatSessionDetailResponse(StrictModel):

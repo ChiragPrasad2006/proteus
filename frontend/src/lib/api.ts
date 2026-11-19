@@ -35,6 +35,8 @@ export interface ChatTurnResponse {
   review_reason: string
   contacts: RecipientContact[]
   clarification: { prompt: string; candidates: RecipientContact[] } | null
+  /** Updated session title if auto-summarized or renamed. */
+  session_title?: string
 }
 
 export interface SessionListResponse {
@@ -161,6 +163,7 @@ function normalizeSessionSummary(value: unknown): Session {
     preview: asString(raw.preview),
     updatedAt: asString(raw.updated_at ?? raw.updatedAt),
     accountId: asString(raw.account_id ?? raw.accountId),
+    isCustomTitle: Boolean(raw.is_custom_title ?? raw.isCustomTitle),
   }
 }
 
@@ -231,6 +234,7 @@ export function normalizeChatTurnResponse(value: unknown): ChatTurnResponse {
     clarification: status === 'NEEDS_CLARIFICATION'
       ? { prompt: assistantMessage, candidates: clarificationCandidates }
       : null,
+    session_title: typeof raw.session_title === 'string' ? raw.session_title : undefined,
   }
 }
 
@@ -482,5 +486,24 @@ export const api = {
     const raw = asRecord(await request<unknown>('/contacts', { accountId }))
     const contacts = Array.isArray(raw.contacts) ? raw.contacts.map(normalizeRecipient) : []
     return { contacts }
+  },
+
+  /* ── Session management ─────────────────────────────────────────────────── */
+
+  renameSession: async (id: string, title: string, accountId?: string): Promise<Session> => {
+    const result = await request<unknown>(`/chat/sessions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+      accountId,
+    })
+    return normalizeSessionSummary(result)
+  },
+
+  deleteSession: async (id: string, accountId?: string): Promise<{ deleted: boolean; session_id: string }> => {
+    const result = await request<{ deleted: boolean; session_id: string }>(`/chat/sessions/${id}`, {
+      method: 'DELETE',
+      accountId,
+    })
+    return { deleted: Boolean(result.deleted), session_id: result.session_id ?? id }
   },
 }

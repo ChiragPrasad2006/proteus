@@ -45,6 +45,7 @@ from backend.schemas import (
     ChatSessionCreateRequest,
     ChatSessionDetailResponse,
     ChatSessionListResponse,
+    ChatSessionRenameRequest,
     ChatSessionSummary,
     ChatTurnRequest,
     ChatTurnResponse,
@@ -398,6 +399,63 @@ def _resolve_primary_name(resolution_list: list[Any]) -> str:
         if matched is not None:
             return matched.full_name or matched.email
     return ""
+
+
+def build_email_session_title(to_recipients: list[str], subject: str, fallback_message: str = "") -> str:
+    """Generate a crisp session title from email recipients and subject.
+    
+    Returns a title like 'Jatin — AR&VR Project Proposal' (max ~52 chars).
+    Uses resolved first name from recipient email/local-part + clean subject.
+    Falls back to keywords from user message when subject is not provided.
+    """
+    # Get recipient display name
+    recipient_name = ""
+    if to_recipients:
+        first_to = to_recipients[0]
+        # Try to extract a readable name from the email
+        if "@" in first_to:
+            local = first_to.split("@")[0]
+            # Clean up local part: jatin.mehta -> Jatin
+            for sep in (".", "_", "-", "+"):
+                local = local.split(sep)[0]
+            if local.isalpha() and 2 <= len(local) <= 20:
+                recipient_name = local.capitalize()
+            else:
+                recipient_name = first_to
+        else:
+            recipient_name = first_to
+    
+    # Clean subject: remove Re:, Fwd:, etc.
+    clean_subject = subject.strip()
+    for prefix in ("Re:", "RE:", "Fwd:", "FWD:", "Fw:", "FW:"):
+        if clean_subject.startswith(prefix):
+            clean_subject = clean_subject[len(prefix):].strip()
+    
+    # Build title
+    if recipient_name and clean_subject:
+        title = f"{recipient_name} — {clean_subject}"
+    elif recipient_name and not clean_subject:
+        # Extract keywords from fallback message when subject is empty
+        # Filter out common words
+        stopwords = {"send", "email", "to", "about", "the", "a", "an", "and", "or", "for", "with", "me", "my", "please", "write", "draft"}
+        words = [w.strip(".,!?") for w in fallback_message.lower().split() if w.strip(".,!?") not in stopwords and len(w.strip(".,!?")) > 2]
+        keywords = " ".join(words[:5]) if words else ""
+        if keywords:
+            title = f"{recipient_name} — {keywords}"
+        else:
+            title = f"Email to {recipient_name}"
+    elif clean_subject:
+        title = clean_subject
+    else:
+        # Fallback to first few words of user message
+        words = fallback_message.strip().split()[:8]
+        title = " ".join(words) if words else "New session"
+    
+    # Truncate to ~52 chars
+    if len(title) > 52:
+        title = title[:49].rstrip() + "..."
+    
+    return title or "New session"
 
 
 def _extract_email_from_clarification(text: str) -> tuple[str | None, str | None]:
@@ -1355,6 +1413,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             card.setdefault("review_reason", "")
         return ChatSessionDetailResponse(**detail)
 
+    @app.patch("/api/chat/sessions/{session_id}", response_model=ChatSessionSummary)
+    def rename_chat_session(
+        session_id: str,
+        rename_data: ChatSessionRenameRequest,
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> ChatSessionSummary:
+        """Rename a chat session and mark title as custom (user-set)."""
+        account, acc_settings = ctx
+        if account is None:
+            raise HTTPException(status_code=400, detail="X-Account-ID header is required.")
+        sessions = ChatSessionStore(acc_settings.chat_sessions_path)
+        # Verify session belongs to this account
+        session = sessions.get_session_summary(session_id)
+        if session is None or session["account_id"] != account.account_id:
+            raise HTTPException(status_code=404, detail="Session not found for this account.")
+        # Trim and validate title
+        new_title = rename_data.title.strip()
+        if not new_title:
+            raise HTTPException(status_code=422, detail="Title cannot be empty.")
+        if len(new_title) > 100:
+            raise HTTPException(status_code=422, detail="Title exceeds 100 characters.")
+        # Update title and mark as custom
+        sessions.update_session_title(session_id, new_title, is_custom=True)
+        updated = sessions.get_session_summary(session_id)
+        return ChatSessionSummary.model_validate(updated)
+
+    @app.delete("/api/chat/sessions/{session_id}")
+    def delete_chat_session(
+        session_id: str, ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx)
+    ) -> dict[str, Any]:
+        """Delete a chat session, its messages, and associated drafts."""
+        account, acc_settings = ctx
+        if account is None:
+            raise HTTPException(status_code=400, detail="X-Account-ID header is required.")
+        sessions = ChatSessionStore(acc_settings.chat_sessions_path)
+        # Verify session belongs to this account
+        session = sessions.get_session_summary(session_id)
+        if session is None or session["account_id"] != account.account_id:
+            raise HTTPException(status_code=404, detail="Session not found for this account.")
+        # Delete session (cascades to messages and draft_cards via delete_session)
+        deleted = sessions.delete_session(session_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Session not found.")
+        return {"deleted": True, "session_id": session_id}
+
     @app.post("/api/chat/turn", response_model=ChatTurnResponse)
     def chat_turn(
         request: ChatTurnRequest,
@@ -1508,6 +1611,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 assistant_message,
                 metadata={"status": "PENDING_REVIEW", "card_id": card["card_id"], "draft_id": pending_draft_id},
             )
+            # Auto-update session title if not custom (subject may have changed)
+            session_summary = sessions.get_session_summary(session_id)
+            session_title = None
+            if session_summary and not session_summary.get("is_custom_title", False):
+                new_title = build_email_session_title(card.get("to", []), card.get("subject", ""), request.user_message)
+                sessions.update_session_title(session_id, new_title, is_custom=False)
+                session_title = new_title
+            elif session_summary:
+                session_title = session_summary.get("title")
+
             return ChatTurnResponse(
                 session_id=session_id,
                 status="PENDING_REVIEW",
@@ -1516,6 +1629,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 resolutions={},
                 draft_card=card,
                 review_reason=review_reason,
+                session_title=session_title,
             )
 
         # Contact registry (rebuild once from the corpus when empty).
@@ -1768,6 +1882,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             metadata={"status": status, "card_id": card["card_id"], "draft_source": draft_source},
         )
 
+        # Auto-update session title if not custom
+        session_summary = sessions.get_session_summary(session_id)
+        session_title = None
+        if session_summary and not session_summary.get("is_custom_title", False):
+            new_title = build_email_session_title(to_emails, subject, request.user_message)
+            sessions.update_session_title(session_id, new_title, is_custom=False)
+            session_title = new_title
+        elif session_summary:
+            session_title = session_summary.get("title")
+
         return ChatTurnResponse(
             session_id=session_id,
             status=status,
@@ -1776,6 +1900,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             resolutions=_schemas(resolution_lists),
             draft_card=card,
             review_reason="; ".join(review_reasons) if review_reasons else None,
+            session_title=session_title,
         )
 
     # Serve the compiled SPA without allowing StaticFiles to intercept unknown

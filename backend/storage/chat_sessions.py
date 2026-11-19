@@ -53,7 +53,8 @@ class ChatSessionStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     message_count INTEGER NOT NULL DEFAULT 0,
-                    pending_clarification_json TEXT NOT NULL DEFAULT '{}'
+                    pending_clarification_json TEXT NOT NULL DEFAULT '{}',
+                    is_custom_title INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     message_id TEXT PRIMARY KEY,
@@ -88,6 +89,8 @@ class ChatSessionStore:
             # Idempotent migrations for existing databases
             self._ensure_column(connection, "sessions", "pending_clarification_json",
                                "pending_clarification_json TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(connection, "sessions", "is_custom_title",
+                               "is_custom_title INTEGER NOT NULL DEFAULT 0")
 
     # --- sessions -----------------------------------------------------------
     def create_session(
@@ -129,6 +132,7 @@ class ChatSessionStore:
     def _session_row(row: sqlite3.Row) -> dict[str, Any]:
         import json
         pending = row["pending_clarification_json"] if "pending_clarification_json" in row.keys() else "{}"
+        is_custom = row["is_custom_title"] if "is_custom_title" in row.keys() else 0
         return {
             "session_id": row["session_id"],
             "account_id": row["account_id"],
@@ -137,6 +141,7 @@ class ChatSessionStore:
             "updated_at": row["updated_at"],
             "message_count": row["message_count"],
             "pending_clarification": json.loads(pending or "{}"),
+            "is_custom_title": bool(is_custom),
         }
 
     def list_sessions(self, account_id: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -158,6 +163,14 @@ class ChatSessionStore:
             connection.execute(
                 "UPDATE sessions SET title = ?, updated_at = ? WHERE session_id = ?",
                 (title, _now(), session_id),
+            )
+
+    def update_session_title(self, session_id: str, title: str, is_custom: bool = False) -> None:
+        """Update session title and optionally mark as custom."""
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE sessions SET title = ?, updated_at = ?, is_custom_title = ? WHERE session_id = ?",
+                (title, _now(), 1 if is_custom else 0, session_id),
             )
 
     def _touch(self, connection: sqlite3.Connection, session_id: str) -> None:

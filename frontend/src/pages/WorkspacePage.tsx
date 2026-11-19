@@ -99,6 +99,10 @@ export function WorkspacePage() {
         draft: data.draft_card || null,
         clarification: data.clarification,
       })
+      // Update session title if returned from backend (auto-summarized or renamed)
+      if (data.session_title) {
+        useAppStore.getState().renameSession(data.session_id, data.session_title)
+      }
     },
     onError: (err) => {
       setBanner(humanError(err))
@@ -142,6 +146,8 @@ export function WorkspacePage() {
       updateDraft(variables.messageId, { subject: data.subject, body: data.body, status: 'PENDING_REVIEW' })
       setBanner(null)
       setToast('Draft revised in place. Review it before sending.')
+      // Note: tweakDraft endpoint doesn't return session_title/session_id
+      // Session title updates happen via chat/turn when user tweaks via chat
     },
     onError: (err) => { setBanner(humanError(err)); setToast(null) },
   })

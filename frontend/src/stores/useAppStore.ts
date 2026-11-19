@@ -73,7 +73,12 @@ export const useAppStore = create<AppState>()(
           if (get().activeAccountId === accountId && get().activeSessionId === id) set({ messages: detail.messages })
         } catch { if (get().activeAccountId === accountId && get().activeSessionId === id) set({ messages: [] }) }
       },
-      renameSession: (id, title) => set((state) => ({ sessions: state.sessions.map((item) => item.id === id ? { ...item, title } : item) })),
+      renameSession: (id, title) => set((state) => ({ sessions: state.sessions.map((item) => item.id === id ? { ...item, title, isCustomTitle: true } : item) })),
+      deleteSession: (id: string) => set((state) => {
+        const sessions = state.sessions.filter((item) => item.id !== id)
+        const activeSessionId = state.activeSessionId === id ? (sessions[0]?.id ?? null) : state.activeSessionId
+        return { sessions, activeSessionId }
+      }),
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
       setAutoSend: (autoSend) => set({ autoSend }), setTweakHint: (tweakHint) => set({ tweakHint }),
       appendMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),

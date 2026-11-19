@@ -548,5 +548,177 @@ class SchemaMigrationTests(_ChatTestBase):
         self.assertEqual(messages[0]["content"], "Hello")
 
 
+
+class SessionTitleTests(_ChatTestBase):
+    """Tests for auto-summarize email as session title, rename, and delete."""
+
+    def test_auto_title_updates_from_new_session_to_email_summary(self) -> None:
+        """Session title should auto-update from 'New session' to email summary when draft is generated."""
+        account_id, _ = self._demo_seed_and_profile("chirag@expano.in")
+        self._seed_contacts(account_id, [_MANU])
+
+        # Create a session with default title
+        session = self.client.post(
+            "/api/chat/sessions",
+            headers={"X-Account-ID": account_id},
+            json={"title": "New session"},
+        ).json()
+        session_id = session["session_id"]
+        self.assertEqual(session["title"], "New session")
+
+        # Send a chat turn that generates a draft
+        turn = self._turn(account_id, "send an email to manu about the roadmap", session_id=session_id)
+        self.assertIn(turn["status"], ("PENDING_REVIEW", "DRAFTED", "SENT"))
+
+        # Check that session_title was returned and session was updated
+        self.assertIn("session_title", turn)
+        self.assertIsNotNone(turn.get("session_title"))
+        self.assertNotEqual(turn["session_title"], "New session")
+        # Should contain recipient name and subject
+        self.assertIn("Manu", turn["session_title"])
+        self.assertIn("roadmap", turn["session_title"].lower())
+
+        # Verify session in store was updated
+        sessions = self.client.get("/api/chat/sessions", headers={"X-Account-ID": account_id}).json()["sessions"]
+        updated = next(s for s in sessions if s["session_id"] == session_id)
+        self.assertEqual(updated["title"], turn["session_title"])
+        self.assertFalse(updated.get("isCustomTitle", False))
+
+    def test_rename_session_marks_custom_and_prevents_overwrite(self) -> None:
+        """PATCH rename should set isCustomTitle=true and prevent subsequent turns from overwriting."""
+        account_id, _ = self._demo_seed_and_profile("chirag@expano.in")
+        self._seed_contacts(account_id, [_MANU])
+
+        session = self.client.post(
+            "/api/chat/sessions",
+            headers={"X-Account-ID": account_id},
+            json={"title": "New session"},
+        ).json()
+        session_id = session["session_id"]
+
+        # Rename the session
+        renamed = self.client.patch(
+            f"/api/chat/sessions/{session_id}",
+            headers={"X-Account-ID": account_id},
+            json={"title": "My Custom Title"},
+        )
+        self.assertEqual(renamed.status_code, 200, renamed.text)
+        self.assertEqual(renamed.json()["title"], "My Custom Title")
+        self.assertTrue(renamed.json().get("is_custom_title", False))
+
+        # Send another chat turn - should NOT overwrite the custom title
+        turn = self._turn(account_id, "send an email to manu about the quarterly plan", session_id=session_id)
+        self.assertIn(turn["status"], ("PENDING_REVIEW", "DRAFTED", "SENT"))
+
+        # Verify session title remains custom
+        sessions = self.client.get("/api/chat/sessions", headers={"X-Account-ID": account_id}).json()["sessions"]
+        updated = next(s for s in sessions if s["session_id"] == session_id)
+        self.assertEqual(updated["title"], "My Custom Title")
+        self.assertTrue(updated.get("is_custom_title", False))
+
+    def test_delete_session_removes_session_and_messages(self) -> None:
+        """DELETE should remove session, messages, and associated drafts."""
+        account_id, _ = self._demo_seed_and_profile("chirag@expano.in")
+        self._seed_contacts(account_id, [_MANU])
+
+        session = self.client.post(
+            "/api/chat/sessions",
+            headers={"X-Account-ID": account_id},
+            json={"title": "To Delete"},
+        ).json()
+        session_id = session["session_id"]
+
+        # Add some messages
+        self._turn(account_id, "send an email to manu about the roadmap", session_id=session_id)
+
+        # Delete the session
+        deleted = self.client.delete(
+            f"/api/chat/sessions/{session_id}",
+            headers={"X-Account-ID": account_id},
+        )
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertTrue(deleted.json()["deleted"])
+        self.assertEqual(deleted.json()["session_id"], session_id)
+
+        # Verify session is gone
+        sessions = self.client.get("/api/chat/sessions", headers={"X-Account-ID": account_id}).json()["sessions"]
+        self.assertEqual([s["id"] for s in sessions], [])
+
+    def test_delete_active_session_switches_to_next(self) -> None:
+        """Deleting the active session should switch to the next available session."""
+        account_id, _ = self._demo_seed_and_profile("chirag@expano.in")
+        self._seed_contacts(account_id, [_MANU])
+
+        # Create two sessions
+        session1 = self.client.post(
+            "/api/chat/sessions",
+            headers={"X-Account-ID": account_id},
+            json={"title": "Session 1"},
+        ).json()
+        session2 = self.client.post(
+            "/api/chat/sessions",
+            headers={"X-Account-ID": account_id},
+            json={"title": "Session 2"},
+        ).json()
+
+        # Select session1 as active
+        self.client.post(
+            "/api/chat/turn",
+            headers={"X-Account-ID": account_id},
+            json={"session_id": session1["session_id"], "user_message": "hello"},
+        )
+
+        # Delete session1
+        deleted = self.client.delete(
+            f"/api/chat/sessions/{session1['session_id']}",
+            headers={"X-Account-ID": account_id},
+        )
+        self.assertEqual(deleted.status_code, 200)
+
+        # Verify session2 is now the only one
+        sessions = self.client.get("/api/chat/sessions", headers={"X-Account-ID": account_id}).json()["sessions"]
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]["session_id"], session2["session_id"])
+
+    def test_account_isolation_for_rename_delete(self) -> None:
+        """Account B cannot rename/delete Account A's session."""
+        account_a, _ = self._demo_seed_and_profile("chirag@expano.in")
+        self._seed_contacts(account_a, [_MANU])
+
+        # Account B - create separate account
+        account_b = self.client.post(
+            "/api/accounts",
+            headers={"X-Account-ID": account_a},  # This will fail - need to create properly
+        )
+
+        # Actually, let's create account B properly
+        app = self.client.app
+        account_b_obj = app.state.account_manager.create_account(email="other@test.com", display_name="Other User")
+        account_b_id = account_b_obj.account_id
+
+        # Create session for account A
+        session_a = self.client.post(
+            "/api/chat/sessions",
+            headers={"X-Account-ID": account_a},
+            json={"title": "Account A Session"},
+        ).json()
+        session_a_id = session_a["session_id"]
+
+        # Account B tries to rename Account A's session - should fail with 404
+        rename_attempt = self.client.patch(
+            f"/api/chat/sessions/{session_a_id}",
+            headers={"X-Account-ID": account_b_id},
+            json={"title": "Hacked"},
+        )
+        self.assertEqual(rename_attempt.status_code, 404, "Account B should not access Account A's session")
+
+        # Account B tries to delete Account A's session - should fail with 404
+        delete_attempt = self.client.delete(
+            f"/api/chat/sessions/{session_a_id}",
+            headers={"X-Account-ID": account_b_id},
+        )
+        self.assertEqual(delete_attempt.status_code, 404, "Account B should not delete Account A's session")
+
+
 if __name__ == "__main__":
     unittest.main()

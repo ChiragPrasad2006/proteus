@@ -1,5 +1,5 @@
-import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react'
-import { useMemo } from 'react'
+import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Search, Pencil } from 'lucide-react'
+import { useMemo, useState, useRef, useEffect } from 'react'
 import { AccountSwitcher } from '@/components/workspace/AccountSwitcher'
 import { Wordmark } from '@/components/ui/Wordmark'
 import { Button } from '@/components/ui/Button'
@@ -17,6 +17,11 @@ export function Sidebar() {
   const activeSessionId = useAppStore((s) => s.activeSessionId)
   const selectSession = useAppStore((s) => s.selectSession)
   const createSession = useAppStore((s) => s.createSession)
+  const renameSession = useAppStore((s) => s.renameSession)
+
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
 
   const grouped = useMemo(() => {
     const map = new Map<string, Session[]>()
@@ -31,6 +36,41 @@ export function Sidebar() {
       items: map.get(b)!,
     }))
   }, [sessions])
+
+  // Focus rename input when it appears
+  useEffect(() => {
+    if (renamingId && renameInputRef.current) {
+      renameInputRef.current.focus()
+      renameInputRef.current.select()
+    }
+  }, [renamingId])
+
+  const handleRenameStart = (session: Session, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setRenamingId(session.id)
+    setRenameDraft(session.title)
+  }
+
+  const handleRenameCommit = async (sessionId: string) => {
+    const title = renameDraft.trim()
+    if (title && title.length <= 100) {
+      try {
+        await renameSession(sessionId, title)
+      } catch {}
+    }
+    setRenamingId(null)
+    setRenameDraft('')
+  }
+
+  const handleRenameCancel = () => {
+    setRenamingId(null)
+    setRenameDraft('')
+  }
+
+  const handleRenameKeyDown = (e: React.KeyboardEvent, sessionId: string) => {
+    if (e.key === 'Enter') handleRenameCommit(sessionId)
+    if (e.key === 'Escape') handleRenameCancel()
+  }
 
   return (
     <aside
@@ -131,54 +171,82 @@ export function Sidebar() {
             <ul className="space-y-0.5">
               {items.map((session) => {
                 const isActive = session.id === activeSessionId
+                const isRenaming = renamingId === session.id
+
                 return (
                   <li key={session.id}>
-                    <button
-                      type="button"
-                      onClick={() => selectSession(session.id)}
-                      title={collapsed ? session.title : undefined}
-                      className={cn(
-                        'group relative w-full rounded-[14px] text-left transition-colors duration-300 ease-proteus',
-                        collapsed ? 'flex justify-center px-0 py-2.5' : 'px-2.5 py-2',
-                        isActive ? 'bg-white/[0.06]' : 'hover:bg-white/[0.035]',
-                      )}
-                    >
-                      {isActive ? (
-                        <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
-                      ) : null}
+                    {isRenaming ? (
+                      <div className="px-2.5 py-1.5">
+                        <input
+                          ref={renameInputRef}
+                          type="text"
+                          value={renameDraft}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onBlur={() => handleRenameCommit(session.id)}
+                          onKeyDown={(e) => handleRenameKeyDown(e, session.id)}
+                          className="w-full rounded-lg border border-accent/40 bg-ink/60 px-2 py-1 text-[13px] text-fg focus:outline-none"
+                          autoFocus
+                        />
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => selectSession(session.id)}
+                        title={collapsed ? session.title : undefined}
+                        className={cn(
+                          'group relative w-full rounded-[14px] text-left transition-colors duration-300 ease-proteus',
+                          collapsed ? 'flex justify-center px-0 py-2.5' : 'px-2.5 py-2',
+                          isActive ? 'bg-white/[0.06]' : 'hover:bg-white/[0.035]',
+                        )}
+                      >
+                        {isActive ? (
+                          <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
+                        ) : null}
 
-                      {collapsed ? (
-                        <span
-                          className={cn(
-                            'inline-flex h-8 w-8 items-center justify-center rounded-full border text-[10px] font-mono uppercase',
-                            isActive
-                              ? 'border-accent/40 bg-accent/10 text-accent'
-                              : 'border-hairline text-fg-faint',
-                          )}
-                        >
-                          {session.title.slice(0, 2)}
-                        </span>
-                      ) : (
-                        <>
+                        {collapsed ? (
                           <span
                             className={cn(
-                              'block truncate text-[13px] leading-snug',
-                              isActive ? 'text-fg' : 'text-fg-muted group-hover:text-fg',
+                              'inline-flex h-8 w-8 items-center justify-center rounded-full border text-[10px] font-mono uppercase',
+                              isActive
+                                ? 'border-accent/40 bg-accent/10 text-accent'
+                                : 'border-hairline text-fg-faint',
                             )}
                           >
-                            {session.title}
+                            {session.title.slice(0, 2)}
                           </span>
-                          <span className="mt-0.5 flex items-center gap-2">
-                            <span className="truncate text-[11px] text-fg-faint">
-                              {session.preview}
+                        ) : (
+                          <>
+                            <span
+                              className={cn(
+                                'block truncate text-[13px] leading-snug',
+                                isActive ? 'text-fg' : 'text-fg-muted group-hover:text-fg',
+                              )}
+                            >
+                              {session.title}
                             </span>
-                          </span>
-                          <span className="mt-1 block font-mono text-[10px] text-fg-faint/70">
-                            {formatRelativeTime(session.updatedAt)}
-                          </span>
-                        </>
-                      )}
-                    </button>
+                            <span className="mt-0.5 flex items-center gap-2">
+                              <span className="truncate text-[11px] text-fg-faint">
+                                {session.preview}
+                              </span>
+                            </span>
+                            <span className="mt-1 block font-mono text-[10px] text-fg-faint/70">
+                              {formatRelativeTime(session.updatedAt)}
+                            </span>
+                            {/* Action buttons on hover */}
+                            <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-proteus">
+                              <button
+                                type="button"
+                                onClick={(e) => handleRenameStart(session, e)}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded border border-hairline text-fg-faint transition-colors hover:border-hairline-strong hover:text-fg hover:bg-white/[0.03]"
+                                aria-label="Rename session"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </button>
+                    )}
                   </li>
                 )
               })}

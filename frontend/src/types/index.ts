@@ -33,6 +33,8 @@ export interface Session {
   /** ISO-8601 timestamp of the last activity. */
   updatedAt: string
   accountId: string
+  /** True if the title was explicitly set by the user (prevents auto-overwrites). */
+  isCustomTitle?: boolean
 }
 
 export interface RecipientContact {
