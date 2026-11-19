@@ -21,6 +21,7 @@ interface AppState {
   createSession: () => Promise<void>
   selectSession: (id: string) => Promise<void>
   renameSession: (id: string, title: string) => void
+  deleteSession: (id: string) => void
   toggleSidebar: () => void
   setAutoSend: (value: boolean) => void
   setTweakHint: (value: string) => void
