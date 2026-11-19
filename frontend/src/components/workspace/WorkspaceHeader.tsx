@@ -22,19 +22,20 @@ export function WorkspaceHeader() {
   const setAutoSend = useAppStore((s) => s.setAutoSend)
   const account = useActiveAccount()
 
-  const session = sessions.find((s) => s.id === activeSessionId) ?? sessions[0]!
+  const session = sessions?.find((s) => s.id === activeSessionId) ?? sessions?.[0] ?? null
+  const sessionTitle = session?.title ?? 'New session'
   const [editing, setEditing] = useState(false)
-  const [draftTitle, setDraftTitle] = useState(session.title)
+  const [draftTitle, setDraftTitle] = useState(sessionTitle)
 
-  useEffect(() => setDraftTitle(session.title), [session.id, session.title])
+  useEffect(() => setDraftTitle(sessionTitle), [session?.id, sessionTitle])
 
   const runtime = useRuntimeStatus('Qwen3:8B')
   const style = STATE_STYLE[runtime.state]
 
   const commitTitle = () => {
     const next = draftTitle.trim()
-    if (next && next !== session.title) renameSession(session.id, next)
-    else setDraftTitle(session.title)
+    if (session && next && next !== session.title) renameSession(session.id, next)
+    else setDraftTitle(sessionTitle)
     setEditing(false)
   }
 
@@ -63,7 +64,7 @@ export function WorkspaceHeader() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') commitTitle()
                 if (e.key === 'Escape') {
-                  setDraftTitle(session.title)
+                  setDraftTitle(sessionTitle)
                   setEditing(false)
                 }
               }}
@@ -72,15 +73,14 @@ export function WorkspaceHeader() {
           ) : (
             <button
               type="button"
-              onClick={() => setEditing(true)}
-              className="group flex min-w-0 items-center gap-2 text-left"
+              onClick={() => session && setEditing(true)}
+              disabled={!session}
+              className="group flex min-w-0 items-center gap-2 text-left disabled:cursor-default"
             >
               <h1 className="truncate font-display text-lg font-normal leading-tight text-fg">
-                {session.title}
+                {sessionTitle}
               </h1>
-              <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-fg-faint opacity-0 transition-opacity group-hover:opacity-100">
-                rename
-              </span>
+              {session ? <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-fg-faint opacity-0 transition-opacity group-hover:opacity-100">rename</span> : null}
             </button>
           )}
           <p className="mt-0.5 truncate font-mono text-[11px] text-fg-faint">
