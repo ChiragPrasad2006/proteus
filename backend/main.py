@@ -32,6 +32,7 @@ from backend.connectors import (
     OutlookConnector,
 )
 from backend.generation import DrafterUnavailable, QwenDrafter
+from backend.connectors.gmail_connector import GMAIL_SEND_SCOPE
 from backend.processing import clean_raw_email, compute_stylometry
 from backend.profiler import ProfilerUnavailable, QwenStyleProfiler
 from backend.retrieval import LanceDBVectorStore, LocalEmbedder
@@ -52,6 +53,8 @@ from backend.schemas import (
     DispatchResponse,
     DraftRequest,
     DraftResponse,
+    DraftTweakRequest,
+    DraftTweakResponse,
     GoogleAuthStartResponse,
     GoogleOAuthCredentialsStatus,
     GoogleOAuthCredentialsUpload,
@@ -571,22 +574,111 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _resolve_account(x_account_id)
 
     def _connector_for_account(acc_settings: Settings):
-        """Return the selected account's verified outbound connector."""
+        """Prefer the verified local App Password; use Gmail REST only with gmail.send."""
         app_password_file = acc_settings.local_user_data_dir / "app_password.bin"
+        account = account_manager.get_account(acc_settings.local_user_data_dir.name)
+        if account is None:
+            raise ConnectorError("The selected Gmail account is not registered.")
         if app_password_file.is_file():
             try:
-                app_password = reveal_secret(app_password_file.read_text(encoding="utf-8"), acc_settings.local_user_data_dir)
-                account = account_manager.get_account(acc_settings.local_user_data_dir.name)
-                if account is not None:
+                app_password = reveal_secret(
+                    app_password_file.read_text(encoding="utf-8"),
+                    acc_settings.local_user_data_dir,
+                )
+                if len(app_password) == 16:
                     return GmailAppPasswordConnector(account.email, app_password)
-            except Exception:
-                # Do not expose secret-storage details through email endpoints.
-                pass
-        return GmailConnector(
-            acc_settings.google_client_secrets_file,
+            except Exception as exc:
+                raise ConnectorError("The saved Gmail App Password could not be opened; reconnect the mailbox.") from exc
+
+        token_candidates = (
             acc_settings.oauth_token_dir / "google_identity.json",
-            scopes=list(acc_settings.google_oauth_scopes),
+            acc_settings.oauth_token_dir / "gmail_token.json",
         )
+        for token_file in token_candidates:
+            if not token_file.is_file():
+                continue
+            try:
+                token_data = json.loads(token_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            scopes = token_data.get("scopes") or token_data.get("granted_scopes") or []
+            if isinstance(scopes, list) and GMAIL_SEND_SCOPE in scopes:
+                return GmailConnector(
+                    acc_settings.google_client_secrets_file,
+                    token_file,
+                    scopes=[scope for scope in scopes if isinstance(scope, str)],
+                )
+        raise ConnectorError(
+            "This OAuth token lacks gmail.send and no App Password is saved. Unlock the mailbox with a Gmail App Password before sending."
+        )
+
+    def _revise_staged_draft(
+        acc_settings: Settings,
+        request: DraftTweakRequest,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Revise and persist an existing pending draft without re-resolving recipients."""
+        store = ProfileStore(acc_settings)
+        pending = store.load_pending_draft(request.draft_id)
+        if pending is None:
+            raise HTTPException(status_code=404, detail="Pending draft not found.")
+        profile = store.load_profile()
+        if profile is None:
+            raise HTTPException(status_code=409, detail="The sender style profile is unavailable.")
+
+        request_data = dict(pending["request"])
+        to_recipients = request.current_to if request.current_to is not None else request_data.get("to", [])
+        cc_recipients = request.current_cc if request.current_cc is not None else request_data.get("cc", [])
+        bcc_recipients = request.current_bcc if request.current_bcc is not None else request_data.get("bcc", [])
+        subject = request.current_subject if request.current_subject is not None else request_data.get("subject", "")
+        body = request.current_body if request.current_body is not None else pending.get("draft", "")
+        if not to_recipients:
+            raise HTTPException(status_code=422, detail="A staged draft must retain at least one To recipient.")
+
+        try:
+            revised = QwenDrafter(acc_settings).revise_email_draft(
+                profile=profile,
+                subject=subject,
+                body=body,
+                tweak_instruction=request.tweak_instruction,
+                to_recipients=to_recipients,
+                cc_recipients=cc_recipients,
+                bcc_recipients=bcc_recipients,
+            )
+        except DrafterUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        request_data.update({
+            "to": to_recipients,
+            "cc": cc_recipients,
+            "bcc": bcc_recipients,
+            "subject": revised["subject"],
+        })
+        if not store.update_pending_draft(request.draft_id, request_data, revised["body"]):
+            raise HTTPException(status_code=404, detail="Pending draft disappeared during revision.")
+
+        session_store = ChatSessionStore(acc_settings.chat_sessions_path)
+        card = session_store.update_draft_card_by_draft_id(
+            request.draft_id,
+            subject=revised["subject"],
+            body=revised["body"],
+            status="PENDING_REVIEW",
+            to=to_recipients,
+            cc=cc_recipients,
+            bcc=bcc_recipients,
+        )
+        return {"draft_id": request.draft_id, **revised}, card
+
+    def _looks_like_draft_tweak(text: str) -> bool:
+        lowered = text.strip().lower()
+        if "@" in lowered or re.search(r"\b(?:send|email|write)\s+(?:an?\s+)?email\s+to\b", lowered):
+            return False
+        return bool(re.search(
+            r"\b(?:tweak|revise|rewrite|make\s+(?:it|this|the draft)|let\s+(?:it|this|the draft)\s+be|"
+            r"(?:so|too|very|less|bit)\s+(?:formal|casual|stiff|wordy|robotic|corporate|informal)|"
+            r"more\s+(?:casual|formal|concise|brief|direct|friendly|warm|polite|professional|human|natural|conversational)|"
+            r"less\s+(?:formal|wordy|stiff|robotic|corporate))\b",
+            lowered,
+        ))
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -1128,6 +1220,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             profile_id=profile.profile_id,
         )
 
+    @app.post("/api/draft/tweak", response_model=DraftTweakResponse)
+    def tweak_draft(
+        request: DraftTweakRequest,
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> DraftTweakResponse:
+        """Revise a pending draft in place, preserving its staged envelope and thread."""
+        _, acc_settings = ctx
+        revised, _ = _revise_staged_draft(acc_settings, request)
+        return DraftTweakResponse(**revised)
+
     # --- Tier 4: Autonomous dispatch endpoints ------------------------------
     @app.post("/api/email/dispatch", response_model=DispatchResponse)
     def dispatch_email(
@@ -1135,7 +1237,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> DispatchResponse:
         """Autonomous email dispatch with first-recipient gate."""
         _, acc_settings = ctx
-        return Dispatcher(acc_settings).dispatch(request)
+        return Dispatcher(
+            acc_settings,
+            connector_factory=lambda: _connector_for_account(acc_settings),
+        ).dispatch(request)
 
     @app.post("/api/email/approve-and-learn", response_model=ApproveAndLearnResponse)
     def approve_and_learn(
@@ -1143,7 +1248,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> ApproveAndLearnResponse:
         """Approve a pending draft and extract style rules from user edits."""
         _, acc_settings = ctx
-        return StyleLearner(acc_settings).approve_and_learn(request)
+        learner = StyleLearner(
+            acc_settings,
+            connector_factory=lambda: _connector_for_account(acc_settings),
+        )
+        return learner.approve_and_learn(request)
 
     # --- Chat sessions ------------------------------------------------------
     @app.get("/api/chat/sessions", response_model=ChatSessionListResponse)
@@ -1229,6 +1338,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session_id = session["session_id"]
         sessions.append_message(session_id, "user", request.user_message)
 
+        pending_draft_id = sessions.latest_pending_draft_id(session_id)
+        if pending_draft_id and _looks_like_draft_tweak(request.user_message):
+            revised, card = _revise_staged_draft(
+                acc_settings,
+                DraftTweakRequest(
+                    draft_id=pending_draft_id,
+                    tweak_instruction=request.user_message,
+                ),
+            )
+            if card is None:
+                raise HTTPException(status_code=404, detail="The staged chat draft card was not found.")
+            card["subject"] = revised["subject"]
+            card["body"] = revised["body"]
+            review_reason = "Revised draft is ready for review before sending."
+            card["warnings"] = [{
+                "id": "review-revised-draft",
+                "severity": "warning",
+                "title": "Review required",
+                "detail": review_reason,
+            }]
+            card["retrieved_examples"] = []
+            card["model_used"] = acc_settings.model_name
+            card["review_reason"] = review_reason
+            assistant_message = "Updated the pending draft. Review the revision before sending."
+            sessions.append_message(
+                session_id,
+                "assistant",
+                assistant_message,
+                metadata={"status": "PENDING_REVIEW", "card_id": card["card_id"], "draft_id": pending_draft_id},
+            )
+            return ChatTurnResponse(
+                session_id=session_id,
+                status="PENDING_REVIEW",
+                assistant_message=assistant_message,
+                parsed={"source": "draft_tweak"},
+                resolutions={},
+                draft_card=card,
+                review_reason=review_reason,
+            )
+
         # Contact registry (rebuild once from the corpus when empty).
         resolver = ContactResolver(acc_settings.contacts_path)
         try:
@@ -1299,9 +1448,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 resolutions=_schemas(resolution_lists),
             )
 
-        to_emails = [r.matched.email for r in to_res if r.matched]
-        cc_emails = [r.matched.email for r in cc_res if r.matched]
-        bcc_emails = [r.matched.email for r in bcc_res if r.matched]
+        def _unique_preserve_order(items: list[str]) -> list[str]:
+            return list(dict.fromkeys(items))
+        to_emails = _unique_preserve_order([r.matched.email for r in to_res if r.matched])
+        cc_emails = _unique_preserve_order([r.matched.email for r in cc_res if r.matched])
+        bcc_emails = _unique_preserve_order([r.matched.email for r in bcc_res if r.matched])
 
         # Tier 4: first-recipient gate.
         review_reasons: list[str] = []
@@ -1430,6 +1581,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "provider": "demo",
                             "thread_id": None,
                             "in_reply_to": None,
+                            "session_id": session_id,
+                            "card_id": card["card_id"],
                         }),
                         draft_body,
                         datetime.now(timezone.utc).isoformat(),

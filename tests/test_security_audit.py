@@ -375,6 +375,13 @@ class TokenStorageTests(_SecurityAuditBase):
         self.assertTrue(a_dir.is_dir())
         self.assertTrue(b_dir.is_dir())
 
+    def test_protected_app_password_round_trips(self) -> None:
+        from backend.storage.secret_vault import protect_secret, reveal_secret
+
+        key_dir = Path(self.temp_dir.name) / "secret-roundtrip"
+        token = protect_secret("abcdefghijklmnop", key_dir)
+        self.assertEqual(reveal_secret(token, key_dir), "abcdefghijklmnop")
+
     def test_no_token_files_exist_after_seed(self) -> None:
         self._ids()
         token_files = [

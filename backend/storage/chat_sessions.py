@@ -285,6 +285,52 @@ class ChatSessionStore:
                 )
         return self.get_draft_card(card_id)
 
+    def update_draft_card_by_draft_id(
+        self,
+        draft_id: str,
+        subject: str,
+        body: str,
+        status: str | None = None,
+        to: list[str] | None = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT card_id FROM draft_cards WHERE draft_id = ? ORDER BY updated_at DESC LIMIT 1",
+                (draft_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            updates = ["subject = ?", "body = ?", "updated_at = ?"]
+            values: list[Any] = [subject, body, _now()]
+            if to is not None:
+                updates.append("to_json = ?")
+                values.append(json.dumps(to))
+            if cc is not None:
+                updates.append("cc_json = ?")
+                values.append(json.dumps(cc))
+            if bcc is not None:
+                updates.append("bcc_json = ?")
+                values.append(json.dumps(bcc))
+            if status is not None:
+                updates.append("status = ?")
+                values.append(status)
+            values.append(row["card_id"])
+            connection.execute(
+                f"UPDATE draft_cards SET {', '.join(updates)} WHERE card_id = ?",
+                values,
+            )
+        return self.get_draft_card(row["card_id"])
+
+    def latest_pending_draft_id(self, session_id: str) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT draft_id FROM draft_cards WHERE session_id = ? AND status = 'PENDING_REVIEW' AND draft_id IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        return row["draft_id"] if row else None
+
     @staticmethod
     def _card_row(row: sqlite3.Row) -> dict[str, Any]:
         return {

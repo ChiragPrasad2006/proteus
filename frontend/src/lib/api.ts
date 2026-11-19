@@ -368,10 +368,33 @@ export const api = {
       body: JSON.stringify(payload),
       accountId,
     }))
+    const receipt = asRecord(raw.receipt)
     return {
       status: raw.status === 'SENT' ? 'SENT' as const : 'FAILED' as const,
       extracted_rules: asStringArray(raw.extracted_rules),
       rule_scope: asString(raw.rule_scope) || 'global',
+      receipt_error: asString(receipt.error) || asString(raw.detail),
+    }
+  },
+
+  tweakDraft: async (payload: {
+    draft_id: string
+    tweak_instruction: string
+    current_to: string[]
+    current_cc: string[]
+    current_bcc: string[]
+    current_subject: string
+    current_body: string
+  }, accountId?: string): Promise<{ draft_id: string; subject: string; body: string }> => {
+    const raw = asRecord(await request<unknown>('/draft/tweak', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      accountId,
+    }))
+    return {
+      draft_id: asString(raw.draft_id),
+      subject: asString(raw.subject),
+      body: asString(raw.body),
     }
   },
 

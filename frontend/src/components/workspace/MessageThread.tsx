@@ -10,10 +10,12 @@ import type { ChatMessage, EmailDraft } from '@/types'
 export interface MessageThreadProps {
   messages: ChatMessage[]
   busy?: boolean
+  approving?: boolean
+  revising?: boolean
   onResolve: (messageId: string, name: string, email: string) => void
   onApprove: (messageId: string, draft: EmailDraft) => void
   onSave: (messageId: string, draft: EmailDraft) => void
-  onTweak: (messageId: string, text: string) => void
+  onTweak: (messageId: string, text: string, draft: EmailDraft) => Promise<void>
 }
 
 function ProteusMonogram({ className }: { className?: string }) {
@@ -33,6 +35,8 @@ function ProteusMonogram({ className }: { className?: string }) {
 export function MessageThread({
   messages,
   busy = false,
+  approving = false,
+  revising = false,
   onResolve,
   onApprove,
   onSave,
@@ -176,6 +180,8 @@ export function MessageThread({
                     draft={message.draft}
                     messageId={message.id}
                     busy={busy}
+                    approving={approving}
+                    revising={revising}
                     onApprove={onApprove}
                     onSave={onSave}
                     onTweak={onTweak}

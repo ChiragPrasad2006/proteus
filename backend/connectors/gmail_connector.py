@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
@@ -153,7 +154,7 @@ class GmailConnector(BaseEmailConnector):
         return path
 
     def _get_credentials(self, require_send: bool = False):
-        """Get OAuth credentials, optionally requesting send scope."""
+        """Load stored credentials and require an explicit Gmail-send grant for API sends."""
         try:
             from google.auth.transport.requests import Request
             from google.oauth2.credentials import Credentials
@@ -161,17 +162,35 @@ class GmailConnector(BaseEmailConnector):
         except ImportError as exc:
             raise ConnectorError("Gmail dependencies are missing; install google-auth-oauthlib and google-api-python-client.") from exc
 
-        # Always request the full scope set so a single cached token can read and send.
-        scopes = self.scopes
         credentials = None
         if self.token_file.exists():
-            credentials = Credentials.from_authorized_user_file(str(self.token_file), scopes)
+            stored_scopes: list[str] = []
+            if require_send:
+                try:
+                    token_data = json.loads(self.token_file.read_text(encoding="utf-8"))
+                    stored_scopes = token_data.get("scopes") or token_data.get("granted_scopes") or []
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise ConnectorError("Stored Gmail OAuth token could not be read.") from exc
+                if GMAIL_SEND_SCOPE not in stored_scopes:
+                    raise ConnectorError(
+                        "Stored Gmail OAuth token lacks gmail.send; unlock this Gmail account with its App Password to send."
+                    )
+                credentials = Credentials.from_authorized_user_file(str(self.token_file))
+            else:
+                credentials = Credentials.from_authorized_user_file(str(self.token_file), self.scopes)
+
+        if require_send and credentials is None:
+            raise ConnectorError(
+                "No stored Gmail OAuth token grants gmail.send; unlock this Gmail account with its App Password to send."
+            )
         if credentials and credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())
         if not credentials or not credentials.valid:
+            if require_send:
+                raise ConnectorError("Stored Gmail OAuth credentials are not valid for sending.")
             if not self.client_secrets_file.exists():
                 raise ConnectorError("Gmail client_secrets_file is required for the desktop OAuth flow.")
-            flow = InstalledAppFlow.from_client_secrets_file(str(self.client_secrets_file), scopes)
+            flow = InstalledAppFlow.from_client_secrets_file(str(self.client_secrets_file), self.scopes)
             credentials = flow.run_local_server(port=0)
         self.token_file.parent.mkdir(parents=True, exist_ok=True)
         self.token_file.write_text(credentials.to_json(), encoding="utf-8")

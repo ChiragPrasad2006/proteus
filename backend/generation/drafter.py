@@ -318,6 +318,67 @@ class QwenDrafter:
 
         raise DrafterUnavailable("No local inference runtime available for draft generation")
 
+    def revise_email_draft(
+        self,
+        profile: UserStyleProfile,
+        subject: str,
+        body: str,
+        tweak_instruction: str,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+    ) -> dict[str, str]:
+        """Revise only the content/tone of a pending email and return subject/body JSON."""
+        endpoint = f"{self.settings.ollama_url.rstrip('/')}/api/chat"
+        system_prompt = (
+            "You revise an existing email draft. Apply only the user's requested tone/content change. "
+            "Preserve facts, commitments, dates, recipients, and audience topology. Do not add boilerplate, "
+            "SLA/severity blocks, new claims, or unrelated content. Return only JSON with string keys subject and body.\n\n"
+            f"USER STYLE PROFILE:\n{self._format_style_profile(profile)}"
+        )
+        user_prompt = (
+            f"To: {', '.join(to_recipients)}\nCc: {', '.join(cc_recipients)}\n"
+            f"Bcc: {', '.join(bcc_recipients)}\n\nCurrent subject:\n{subject}\n\n"
+            f"Current body:\n{body}\n\nUser's revision instruction:\n{tweak_instruction}\n\n"
+            'Return exactly {"subject":"...","body":"..."}.'
+        )
+        last_error = "No local inference runtime available for draft revision"
+        for model_name in self.settings.ollama_models:
+            try:
+                response = httpx.post(
+                    endpoint,
+                    json={
+                        "model": model_name,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "format": "json",
+                        "think": False,
+                        "stream": False,
+                        "options": {"temperature": 0.2, "top_p": 0.8, "top_k": 20, "num_ctx": self.settings.ollama_num_ctx},
+                    },
+                    timeout=120,
+                )
+                if response.status_code == 404:
+                    last_error = f"Ollama model '{model_name}' not installed"
+                    continue
+                response.raise_for_status()
+                content = response.json().get("message", {}).get("content", "")
+                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                start, end = content.find("{"), content.rfind("}")
+                if start < 0 or end < start:
+                    raise ValueError("Model response did not contain a JSON object.")
+                revised = json.loads(content[start:end + 1])
+                revised_subject = revised.get("subject")
+                revised_body = revised.get("body")
+                if not isinstance(revised_subject, str) or not isinstance(revised_body, str):
+                    raise ValueError("Model response must contain string subject and body fields.")
+                return {"subject": revised_subject.strip(), "body": revised_body.strip()}
+            except (httpx.HTTPError, ValueError, TypeError) as exc:
+                last_error = str(exc)
+        raise DrafterUnavailable(f"Draft revision failed: {last_error}")
+
     def _generate_with_ollama(
         self,
         model_name: str,

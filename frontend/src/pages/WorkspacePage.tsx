@@ -77,6 +77,7 @@ export function WorkspacePage() {
   }, [setAccounts, setActiveAccount])
 
   const [banner, setBanner] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
 
   const health = useHealth()
   const offline = health.isError
@@ -106,10 +107,43 @@ export function WorkspacePage() {
   })
 
   const approve = useMutation({
-    mutationFn: (payload: { draft_id: string; final_subject: string; final_body: string }) =>
+    mutationFn: ({ messageId: _messageId, ...payload }: { messageId: string; draft_id: string; final_subject: string; final_body: string }) =>
       api.approveAndLearn(payload, account?.id),
-    onSuccess: () => setBanner(null),
-    onError: (err) => setBanner(humanError(err)),
+    onSuccess: (data, variables) => {
+      if (data.status === 'SENT') {
+        markDraftSent(variables.messageId)
+        setBanner(null)
+        const learned = data.extracted_rules.length > 0 ? ` Learned: ${data.extracted_rules.join(' · ')}` : ''
+        setToast(`Email sent successfully.${learned}`)
+      } else {
+        updateDraft(variables.messageId, { status: 'FAILED' })
+        setBanner(data.receipt_error || 'Email send failed. The draft remains available for retry.')
+        setToast(null)
+      }
+    },
+    onError: (err) => { setBanner(humanError(err)); setToast(null) },
+  })
+
+  const tweakDraft = useMutation({
+    mutationFn: ({ messageId: _messageId, draft, instruction }: {
+      messageId: string
+      draft: EmailDraft
+      instruction: string
+    }) => api.tweakDraft({
+      draft_id: draft.id,
+      tweak_instruction: instruction,
+      current_to: draft.to,
+      current_cc: draft.cc,
+      current_bcc: draft.bcc,
+      current_subject: draft.subject,
+      current_body: draft.body,
+    }, account?.id),
+    onSuccess: (data, variables) => {
+      updateDraft(variables.messageId, { subject: data.subject, body: data.body, status: 'PENDING_REVIEW' })
+      setBanner(null)
+      setToast('Draft revised in place. Review it before sending.')
+    },
+    onError: (err) => { setBanner(humanError(err)); setToast(null) },
   })
 
   const handleSend = useCallback(
@@ -133,14 +167,14 @@ export function WorkspacePage() {
   const handleApprove = useCallback(
     (messageId: string, draft: EmailDraft) => {
       updateDraft(messageId, draft)
-      markDraftSent(messageId)
       approve.mutate({
+        messageId,
         draft_id: draft.id,
         final_subject: draft.subject,
         final_body: draft.body,
       })
     },
-    [updateDraft, markDraftSent, approve],
+    [updateDraft, approve],
   )
 
   const handleSave = useCallback(
@@ -151,10 +185,10 @@ export function WorkspacePage() {
   )
 
   const handleTweak = useCallback(
-    (_messageId: string, text: string) => {
-      handleSend(`Tweak the current draft: ${text}`)
+    async (messageId: string, text: string, draft: EmailDraft) => {
+      await tweakDraft.mutateAsync({ messageId, draft, instruction: text })
     },
-    [handleSend],
+    [tweakDraft],
   )
 
   const handleResolve = useCallback(
@@ -172,6 +206,12 @@ export function WorkspacePage() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <WorkspaceHeader />
+        {toast ? (
+          <div role="status" aria-live="polite" className="flex items-center justify-between gap-3 border-b border-accent/30 bg-accent/[0.08] px-5 py-2.5 text-[12.5px] text-accent">
+            <p>{toast}</p>
+            <button type="button" onClick={() => setToast(null)} className="shrink-0 text-accent/75 hover:text-accent">Dismiss</button>
+          </div>
+        ) : null}
 
         {account && !account.mailboxConnected ? (
           <MailboxSetupGate account={account} onConnected={handleMailboxConnected} />
@@ -200,6 +240,8 @@ export function WorkspacePage() {
         <MessageThread
           messages={messages}
           busy={chat.isPending}
+          approving={approve.isPending}
+          revising={tweakDraft.isPending}
           onResolve={handleResolve}
           onApprove={handleApprove}
           onSave={handleSave}

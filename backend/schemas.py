@@ -346,6 +346,24 @@ class ContactResolution(StrictModel):
     reason: str = ""
 
 
+class DraftTweakRequest(StrictModel):
+    """Revision of a staged draft without reparsing its recipient intent."""
+
+    draft_id: str
+    tweak_instruction: str = Field(min_length=1)
+    current_to: list[str] | None = None
+    current_cc: list[str] | None = None
+    current_bcc: list[str] | None = None
+    current_subject: str | None = None
+    current_body: str | None = None
+
+
+class DraftTweakResponse(StrictModel):
+    draft_id: str
+    subject: str
+    body: str
+
+
 class ChatTurnRequest(StrictModel):
     """One natural-language turn in a chat session."""
 

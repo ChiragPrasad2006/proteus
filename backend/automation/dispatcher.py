@@ -7,7 +7,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from backend.connectors import (
     BaseEmailConnector,
@@ -34,12 +34,13 @@ from backend.storage import ProfileStore
 class Dispatcher:
     """Orchestrates autonomous email dispatch with first-recipient gate."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, connector_factory: Callable[[], BaseEmailConnector] | None = None) -> None:
         self.settings = settings
         self.store = ProfileStore(settings)
         self.drafter = QwenDrafter(settings)
         self.embedder = LocalEmbedder()
         self.vector_store = LanceDBVectorStore(settings)
+        self.connector_factory = connector_factory
 
     def _connector_from_provider(
         self, provider: str, credentials: dict[str, Any] | None = None, file_path: str | None = None
@@ -74,6 +75,12 @@ class Dispatcher:
         if not path:
             raise ConnectorError("mbox requires file_path or credentials.file_path.")
         return LocalMailFileConnector(Path(path).expanduser())
+
+    def connector_for_provider(self, provider: str) -> BaseEmailConnector:
+        """Return an injected account-aware connector when supplied, otherwise provider defaults."""
+        if provider == "gmail" and self.connector_factory is not None:
+            return self.connector_factory()
+        return self._connector_from_provider(provider)
 
     def dispatch(self, request: DispatchRequest) -> DispatchResponse:
         """
@@ -175,9 +182,7 @@ class Dispatcher:
                 draft=draft,
             )
 
-        # Auto-send: dispatch via connector
-        connector = self._connector_from_provider(request.provider)
-
+        # Auto-send: dispatch via the account-aware connector when configured.
         outbound = OutboundEmailRequest(
             to=to_recipients,
             cc=cc_recipients,
@@ -187,8 +192,10 @@ class Dispatcher:
             thread_id=request.thread_id,
             in_reply_to=request.in_reply_to,
         )
-
-        receipt = connector.send_email(outbound)
+        try:
+            receipt = self.connector_for_provider(request.provider).send_email(outbound)
+        except Exception as exc:
+            receipt = SendReceipt(message_id="", status="failed", error=str(exc))
 
         if receipt.status == "sent":
             # Update sent counts and upsert into LanceDB

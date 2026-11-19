@@ -13,12 +13,15 @@ Conventions match the rest of the suite: a ``tempfile`` Settings with
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import tempfile
 import unittest
 import uuid
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -26,7 +29,7 @@ from backend.automation import Contact, ContactResolver, Dispatcher
 from backend.config import Settings
 from backend.main import create_app
 from backend.schemas import DispatchRequest
-from backend.storage import ProfileStore
+from backend.storage import ChatSessionStore, ProfileStore
 
 _MANU = Contact(
     email="manu@expano.in", full_name="Manu Roy", first_name="Manu", last_name="Roy",
@@ -315,6 +318,128 @@ class ContactPersistenceTests(_ChatTestBase):
     def _contact_count(contacts_db: Path) -> int:
         with sqlite3.connect(contacts_db) as connection:
             return connection.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+
+
+class InPlaceDraftTweakTests(_ChatTestBase):
+    def test_reviser_calls_qwen_json_endpoint_with_thinking_disabled(self) -> None:
+        from backend.generation import QwenDrafter
+
+        account_id, account_settings = self._demo_seed_and_profile("chirag@expano.in")
+        account_settings = replace(account_settings, model_name="qwen3:8b")
+        profile = ProfileStore(account_settings).load_profile()
+        self.assertIsNotNone(profile)
+        assert profile is not None
+
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {"message": {"content": json.dumps({"subject": "Quick update", "body": "Hi, quick update."})}}
+        with patch("backend.generation.drafter.httpx.post", return_value=response) as post:
+            revised = QwenDrafter(account_settings).revise_email_draft(
+                profile=profile,
+                subject="Status update",
+                body="Dear team, here is the detailed update.",
+                tweak_instruction="make it more casual",
+                to_recipients=["kamisama7892@gmail.com"],
+                cc_recipients=[],
+                bcc_recipients=[],
+            )
+
+        self.assertEqual(revised, {"subject": "Quick update", "body": "Hi, quick update."})
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["model"], "qwen3:8b")
+        self.assertIs(payload["think"], False)
+        self.assertEqual(payload["format"], "json")
+        self.assertIn("Formality:", payload["messages"][0]["content"])
+        self.assertIn("Do not add boilerplate", payload["messages"][0]["content"])
+
+    def test_draft_tweak_updates_staged_draft_and_session_card(self) -> None:
+        account_id, account_settings = self._demo_seed_and_profile("chirag@expano.in")
+        store = ProfileStore(account_settings)
+        sessions = ChatSessionStore(account_settings.chat_sessions_path)
+        session = sessions.create_session(account_id, title="Safe draft revision test")
+        draft_id = str(uuid.uuid4())
+        original_request = {
+            "to": ["kamisama7892@gmail.com"],
+            "cc": ["observer@example.test"],
+            "bcc": ["hidden@example.test"],
+            "subject": "Project update",
+            "intent_bullets": "Share a short project status",
+            "provider": "gmail",
+            "thread_id": "<thread@example.test>",
+            "in_reply_to": "<parent@example.test>",
+            "session_id": session["session_id"],
+        }
+        original_body = "Dear team, I am writing to provide the status update."
+        profile = store.load_profile()
+        self.assertIsNotNone(profile)
+        assert profile is not None
+        with sqlite3.connect(account_settings.sqlite_path) as connection:
+            connection.execute(
+                "INSERT INTO pending_drafts (draft_id, profile_id, request_json, draft, created_at, recipient_profiles_json) VALUES (?, ?, ?, ?, ?, ?)",
+                (draft_id, profile.profile_id, json.dumps(original_request), original_body, "2026-11-19T00:00:00+00:00", "{}"),
+            )
+        card = sessions.upsert_draft_card(
+            session_id=session["session_id"],
+            to=original_request["to"], cc=original_request["cc"], bcc=original_request["bcc"], subject=original_request["subject"],
+            body=original_body, status="PENDING_REVIEW", draft_id=draft_id,
+        )
+        sessions.append_message(
+            session["session_id"], "assistant", "Draft ready for review.",
+            metadata={"status": "PENDING_REVIEW", "card_id": card["card_id"]},
+        )
+
+        revised = {"subject": "Project update", "body": "Hi, quick update on the project."}
+        with patch("backend.main.QwenDrafter.revise_email_draft", return_value=revised, create=True):
+            response = self.client.post(
+                "/api/draft/tweak",
+                headers={"X-Account-ID": account_id},
+                json={
+                    "draft_id": draft_id,
+                    "tweak_instruction": "no need to be so formal, let it be casual",
+                    "current_to": ["kamisama7892@gmail.com"],
+                    "current_cc": ["observer@example.test"],
+                    "current_bcc": ["hidden@example.test"],
+                    "current_subject": original_request["subject"],
+                    "current_body": original_body,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["draft_id"], draft_id)
+        self.assertEqual(response.json()["subject"], revised["subject"])
+        self.assertEqual(response.json()["body"], revised["body"])
+        staged = store.load_pending_draft(draft_id)
+        self.assertIsNotNone(staged)
+        assert staged is not None
+        self.assertEqual(staged["draft"], revised["body"])
+        self.assertEqual(staged["request"]["to"], ["kamisama7892@gmail.com"])
+        self.assertEqual(staged["request"]["cc"], ["observer@example.test"])
+        self.assertEqual(staged["request"]["bcc"], ["hidden@example.test"])
+        self.assertEqual(staged["request"]["thread_id"], "<thread@example.test>")
+        detail = sessions.get_session(session["session_id"])
+        self.assertIsNotNone(detail)
+        assert detail is not None
+        self.assertEqual(detail["draft_cards"][0]["subject"], revised["subject"])
+        self.assertEqual(detail["draft_cards"][0]["body"], revised["body"])
+        self.assertEqual(detail["draft_cards"][0]["cc"], ["observer@example.test"])
+        self.assertEqual(detail["draft_cards"][0]["bcc"], ["hidden@example.test"])
+
+        followup_revision = {"subject": "Quick project update", "body": "Hey, here's a quick project update."}
+        with patch("backend.main.QwenDrafter.revise_email_draft", return_value=followup_revision, create=True):
+            followup = self.client.post(
+                "/api/chat/turn",
+                headers={"X-Account-ID": account_id},
+                json={"session_id": session["session_id"], "user_message": "make it more casual"},
+            )
+        self.assertEqual(followup.status_code, 200, followup.text)
+        self.assertEqual(followup.json()["status"], "PENDING_REVIEW")
+        self.assertEqual(followup.json()["draft_card"]["draft_id"], draft_id)
+        self.assertEqual(followup.json()["draft_card"]["body"], followup_revision["body"])
+        self.assertNotIn("Who should I send this to?", followup.json()["assistant_message"])
+        staged_after_followup = store.load_pending_draft(draft_id)
+        self.assertIsNotNone(staged_after_followup)
+        assert staged_after_followup is not None
+        self.assertEqual(staged_after_followup["draft"], followup_revision["body"])
 
 
 if __name__ == "__main__":

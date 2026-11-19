@@ -126,8 +126,8 @@ def _dpapi_reveal(token: str) -> str:
     finally:
         if out_blob.pbData:
             kernel32.LocalFree(ctypes.c_void_p(out_blob.pbData))
-        if descr:
-            kernel32.LocalFree(ctypes.c_void_p(descr))
+        if descr.value:
+            kernel32.LocalFree(ctypes.c_void_p(descr.value))
     return data.decode("utf-8")
 
 

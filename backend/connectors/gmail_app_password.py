@@ -107,13 +107,16 @@ class GmailAppPasswordConnector(BaseEmailConnector):
         message["To"] = ", ".join(payload.to)
         if payload.cc:
             message["Cc"] = ", ".join(payload.cc)
+        if payload.bcc:
+            message["Bcc"] = ", ".join(payload.bcc)
         message["Subject"] = payload.subject
         message["Message-ID"] = make_msgid()
         if payload.thread_id:
-            message["In-Reply-To"] = payload.thread_id
             message["References"] = payload.thread_id
         if payload.in_reply_to:
             message["In-Reply-To"] = payload.in_reply_to
+        elif payload.thread_id:
+            message["In-Reply-To"] = payload.thread_id
         message.set_content(payload.body, subtype="plain")
 
         try:

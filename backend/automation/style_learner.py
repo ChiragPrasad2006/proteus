@@ -6,7 +6,7 @@ import difflib
 import json
 import re
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 
@@ -25,9 +25,10 @@ Ignore factual corrections, number/date changes, or content additions - focus ON
 Each rule should be a single sentence describing a writing habit.
 Retire any conflicting older rule when adding a new one."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, connector_factory: Callable[[], Any] | None = None) -> None:
         self.settings = settings
         self.store = ProfileStore(settings)
+        self.connector_factory = connector_factory
 
     def approve_and_learn(self, request: ApproveAndLearnRequest) -> ApproveAndLearnResponse:
         """
@@ -101,8 +102,8 @@ Retire any conflicting older rule when adding a new one."""
         )
         from backend.schemas import OutboundEmailRequest, DispatchRequest
 
-        dispatcher = Dispatcher(self.settings)
-        connector = dispatcher._connector_from_provider(request_data["provider"])
+        dispatcher = Dispatcher(self.settings, connector_factory=self.connector_factory)
+        connector = dispatcher.connector_for_provider(request_data["provider"])
 
         outbound = OutboundEmailRequest(
             to=request_data["to"],
@@ -114,7 +115,10 @@ Retire any conflicting older rule when adding a new one."""
             in_reply_to=request_data.get("in_reply_to"),
         )
 
-        receipt = connector.send_email(outbound)
+        try:
+            receipt = connector.send_email(outbound)
+        except Exception as exc:
+            receipt = SendReceipt(message_id="", status="failed", error=str(exc))
 
         if receipt.status == "sent":
             # Update sent counts and upsert into LanceDB
@@ -161,6 +165,16 @@ Retire any conflicting older rule when adding a new one."""
                 audience_mode=audience_mode,
                 cc_count=len(request_data.get("cc", [])),
                 bcc_count=len(request_data.get("bcc", [])),
+            )
+
+            # Mark the persisted review card as sent so reopening the session stays consistent.
+            from backend.storage.chat_sessions import ChatSessionStore
+
+            ChatSessionStore(self.settings.chat_sessions_path).update_draft_card_by_draft_id(
+                request.draft_id,
+                subject=request.final_subject,
+                body=request.final_body,
+                status="SENT",
             )
 
             # Clean up pending draft

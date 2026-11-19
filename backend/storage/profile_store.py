@@ -297,6 +297,15 @@ class ProfileStore:
                 "recipient_profiles": json.loads(row[5]),
             }
 
+    def update_pending_draft(self, draft_id: str, request_data: dict[str, Any], draft: str) -> bool:
+        """Persist a revised pending draft while retaining its recipient metadata."""
+        with sqlite3.connect(self.settings.sqlite_path) as connection:
+            cursor = connection.execute(
+                "UPDATE pending_drafts SET request_json = ?, draft = ? WHERE draft_id = ?",
+                (json.dumps(request_data), draft, draft_id),
+            )
+            return cursor.rowcount > 0
+
     def delete_pending_draft(self, draft_id: str) -> bool:
         """Delete a pending draft after approval."""
         with sqlite3.connect(self.settings.sqlite_path) as connection:

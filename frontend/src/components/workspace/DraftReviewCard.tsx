@@ -1,5 +1,5 @@
-import { AlertTriangle, Check, Info, Send, Sparkles, Wand2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { AlertTriangle, Check, Info, LoaderCircle, Send, Sparkles, Wand2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils'
@@ -12,9 +12,11 @@ export interface DraftReviewCardProps {
   /** Mono catalog tag shown in the header, e.g. "FIG.03". */
   catalogIndex?: string
   busy?: boolean
+  approving?: boolean
+  revising?: boolean
   onApprove: (messageId: string, draft: EmailDraft) => void
   onSave: (messageId: string, draft: EmailDraft) => void
-  onTweak: (messageId: string, text: string) => void
+  onTweak: (messageId: string, text: string, draft: EmailDraft) => Promise<void>
 }
 
 const SEVERITY_STYLE: Record<DraftWarning['severity'], { ring: string; text: string; Icon: typeof Info }> = {
@@ -51,6 +53,8 @@ export function DraftReviewCard({
   messageId,
   catalogIndex = 'FIG.03',
   busy = false,
+  approving = false,
+  revising = false,
   onApprove,
   onSave,
   onTweak,
@@ -65,6 +69,14 @@ export function DraftReviewCard({
   const [body, setBody] = useState(typeof draft?.body === 'string' ? draft.body : '')
   const [tweak, setTweak] = useState('')
   const [saved, setSaved] = useState(false)
+  const [localRevising, setLocalRevising] = useState(false)
+
+  useEffect(() => {
+    setSubject(typeof draft?.subject === 'string' ? draft.subject : '')
+  }, [draft?.id, draft?.subject])
+  useEffect(() => {
+    setBody(typeof draft?.body === 'string' ? draft.body : '')
+  }, [draft?.id, draft?.body])
 
   // Initialised once per draft identity — the thread keys this card by draft.id
   // so a fresh draft remounts with a clean editable copy (no effect needed).
@@ -89,11 +101,18 @@ export function DraftReviewCard({
   const firstRecipient = current.to[0] ?? 'this recipient'
   const displayName = current.to[0] ? friendlyName(current.to[0]) : 'this recipient'
 
-  const handleTweak = () => {
+  const handleTweak = async () => {
     const text = tweak.trim()
-    if (!text) return
-    onTweak(messageId, text)
-    setTweak('')
+    if (!text || busy || approving || revising || localRevising) return
+    setLocalRevising(true)
+    try {
+      await onTweak(messageId, text, current)
+      setTweak('')
+    } catch {
+      // The parent mutation surfaces its exact API error in the workspace banner.
+    } finally {
+      setLocalRevising(false)
+    }
   }
 
   return (
@@ -199,6 +218,7 @@ export function DraftReviewCard({
           <Wand2 className="h-3.5 w-3.5 shrink-0 text-accent" strokeWidth={1.7} />
           <input
             value={tweak}
+            disabled={busy || approving || revising || localRevising || isSent}
             onChange={(e) => setTweak(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -206,11 +226,16 @@ export function DraftReviewCard({
                 handleTweak()
               }
             }}
-            placeholder="Suggest a tweak to Proteus…"
+            placeholder={localRevising || revising ? 'Revising…' : 'Suggest a tweak to Proteus…'}
             className="min-w-0 flex-1 bg-transparent text-[13px] text-fg placeholder:text-fg-faint focus:outline-none"
           />
-          <Button size="sm" variant="ghost" onClick={handleTweak} disabled={!tweak.trim() || busy}>
-            Send
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => { void handleTweak() }}
+            disabled={!tweak.trim() || busy || approving || revising || localRevising || isSent}
+          >
+            {localRevising || revising ? <><LoaderCircle className="mr-1.5 h-3.5 w-3.5 animate-spin" />Revising…</> : 'Send'}
           </Button>
         </div>
       </div>
@@ -219,11 +244,11 @@ export function DraftReviewCard({
       <div className="flex flex-wrap items-center gap-3 px-6 pb-6 pt-5">
         <Button
           size="md"
-          disabled={busy || isSent}
+          disabled={busy || approving || revising || localRevising || isSent}
           onClick={() => onApprove(messageId, current)}
-          leftIcon={<Send className="h-4 w-4" />}
+          leftIcon={approving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
         >
-          {isSent ? 'Sent' : 'Approve & Send Now'}
+          {isSent ? 'Sent ✓' : approving ? 'Sending…' : 'Approve & Send Now'}
         </Button>
         <Button
           size="md"
