@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+_MODEL_LOCK = threading.Lock()
+_SHARED_MODEL: Any | None = None
 
 # Set HF_HOME before importing sentence_transformers to keep cache on D: drive
 os.environ.setdefault("HF_HOME", str(Path("D:/huggingface_cache").expanduser().resolve()))
@@ -31,9 +35,18 @@ class LocalEmbedder:
         self._model: SentenceTransformer | None = None
 
     def load(self) -> None:
-        """Load the model onto CPU (keeps GPU VRAM free for Qwen)."""
-        if self._model is None:
-            self._model = SentenceTransformer(self.MODEL_NAME, device="cpu", cache_folder=str(self.cache_dir))
+        """Load and reuse the shared CPU model (keeps GPU VRAM free for Qwen)."""
+        global _SHARED_MODEL
+        if self._model is not None:
+            return
+        with _MODEL_LOCK:
+            if _SHARED_MODEL is None:
+                _SHARED_MODEL = SentenceTransformer(
+                    self.MODEL_NAME,
+                    device="cpu",
+                    cache_folder=str(self.cache_dir),
+                )
+            self._model = _SHARED_MODEL
 
     @property
     def is_loaded(self) -> bool:

@@ -393,6 +393,29 @@ class GoogleIdentityAndMailboxGateTests(_AccountTestBase):
             ),
         )
 
+    def test_accounts_list_heals_mailbox_flag_from_saved_profile(self) -> None:
+        identity = self.client.post(
+            "/api/auth/identity",
+            json={"email": "person@gmail.com", "display_name": "Person Example"},
+        )
+        account_id = identity.json()["account"]["account_id"]
+        account_root = self.settings.local_user_data_dir / "accounts" / account_id
+        (account_root / "user_style_profile.json").write_text(
+            json.dumps({"profile_id": "saved-profile"}), encoding="utf-8"
+        )
+
+        index_path = self.settings.local_user_data_dir / "accounts_index.json"
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        index[account_id]["mailbox_connected"] = False
+        index_path.write_text(json.dumps(index), encoding="utf-8")
+
+        response = self.client.get("/api/accounts")
+        self.assertEqual(response.status_code, 200, response.text)
+        saved_account = next(a for a in response.json()["accounts"] if a["account_id"] == account_id)
+        self.assertTrue(saved_account["mailbox_connected"])
+        persisted = json.loads(index_path.read_text(encoding="utf-8"))
+        self.assertTrue(persisted[account_id]["mailbox_connected"])
+
     def test_manual_identity_creates_locked_account(self) -> None:
         response = self.client.post(
             "/api/auth/identity",
@@ -453,6 +476,10 @@ class GoogleIdentityAndMailboxGateTests(_AccountTestBase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(FakeGmailAppPasswordConnector.verified, ("person@gmail.com", password))
         self.assertTrue(response.json()["account"]["mailbox_connected"])
+        index = json.loads(
+            (self.settings.local_user_data_dir / "accounts_index.json").read_text(encoding="utf-8")
+        )
+        self.assertTrue(index[account_id]["mailbox_connected"])
 
         account_root = self.settings.for_account(account_id).local_user_data_dir
         blob = (account_root / "app_password.bin").read_text(encoding="utf-8")

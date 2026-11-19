@@ -73,9 +73,38 @@ class AccountManager:
         if not self.index_path.exists():
             return {}
         try:
-            return json.loads(self.index_path.read_text(encoding="utf-8"))
+            index = json.loads(self.index_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return {}
+
+        changed = False
+        for account_id, data in index.items():
+            if data.get("mailbox_connected"):
+                continue
+            paths = self.get_account_paths(account_id)
+            has_profile = False
+            profile_path = paths["profile_json"]
+            if profile_path.is_file():
+                try:
+                    has_profile = isinstance(json.loads(profile_path.read_text(encoding="utf-8")), dict)
+                except (OSError, json.JSONDecodeError):
+                    pass
+            has_credentials = False
+            password_path = paths["app_password"]
+            if password_path.is_file():
+                try:
+                    saved_token = password_path.read_text(encoding="utf-8").strip()
+                    has_credentials = saved_token.startswith(("dpapi:", "fernet:")) and len(saved_token) > 30
+                except OSError:
+                    pass
+            if has_profile or has_credentials:
+                data["mailbox_connected"] = True
+                data["updated_at"] = datetime.now(timezone.utc).isoformat()
+                changed = True
+
+        if changed:
+            self._save_index(index)
+        return index
 
     def _save_index(self, index: dict[str, dict[str, Any]]) -> None:
         import tempfile

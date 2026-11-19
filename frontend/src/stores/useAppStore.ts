@@ -16,6 +16,7 @@ interface AppState {
   autoSend: boolean
   tweakHint: string
   setAccounts: (accounts: Account[], activeAccountId: string | null) => void
+  updateAccount: (account: Account) => void
   setActiveAccount: (id: string) => Promise<void>
   createSession: () => Promise<void>
   selectSession: (id: string) => Promise<void>
@@ -41,6 +42,9 @@ export const useAppStore = create<AppState>()(
       sidebarCollapsed: false, autoSend: false, tweakHint: '',
       clearAccountState: () => set({ sessions: [], activeSessionId: null, messages: [], contacts: [], styleProfile: null, pendingDrafts: [] }),
       setAccounts: (accounts, activeAccountId) => set({ accounts, activeAccountId }),
+      updateAccount: (account) => set((state) => ({
+        accounts: state.accounts.map((item) => item.id === account.id ? account : item),
+      })),
       setActiveAccount: async (id) => {
         if (!get().accounts.some((account) => account.id === id)) return
         get().clearAccountState()

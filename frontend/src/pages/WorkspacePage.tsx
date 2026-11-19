@@ -10,7 +10,7 @@ import { useHealth } from '@/hooks/useHealth'
 import { ApiError, api } from '@/lib/api'
 import { uid } from '@/lib/utils'
 import { useActiveAccount, useAppStore } from '@/stores/useAppStore'
-import type { ChatMessage, EmailDraft } from '@/types'
+import type { Account, ChatMessage, EmailDraft } from '@/types'
 
 /** Cached, clearly-labelled fallback shown when the local API is unreachable. */
 function demoReply(): ChatMessage {
@@ -42,7 +42,21 @@ export function WorkspacePage() {
   const autoSend = useAppStore((s) => s.autoSend)
   const account = useActiveAccount()
   const setAccounts = useAppStore((s) => s.setAccounts)
+  const updateAccount = useAppStore((s) => s.updateAccount)
   const setActiveAccount = useAppStore((s) => s.setActiveAccount)
+
+  const handleMailboxConnected = useCallback((connectedAccount: Account) => {
+    updateAccount({ ...connectedAccount, mailboxConnected: true })
+    void (async () => {
+      try {
+        const result = await api.listAccounts()
+        setAccounts(result.accounts, connectedAccount.id)
+      } catch {
+        // Keep the successful response's optimistic mailbox state.
+      }
+      await setActiveAccount(connectedAccount.id)
+    })()
+  }, [setAccounts, setActiveAccount, updateAccount])
 
   useEffect(() => {
     let disposed = false
@@ -159,7 +173,7 @@ export function WorkspacePage() {
         <WorkspaceHeader />
 
         {account && !account.mailboxConnected ? (
-          <MailboxSetupGate account={account} onConnected={() => void setActiveAccount(account.id)} />
+          <MailboxSetupGate account={account} onConnected={handleMailboxConnected} />
         ) : (
           <>
             {showBanner ? (
