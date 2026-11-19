@@ -471,5 +471,82 @@ class InPlaceDraftTweakTests(_ChatTestBase):
         self.assertEqual(staged_after_followup["draft"], followup_revision["body"])
 
 
+
+class SchemaMigrationTests(_ChatTestBase):
+    """Verify idempotent SQLite column migrations for legacy databases."""
+
+    def test_legacy_chat_sessions_migrates_pending_clarification_column(self) -> None:
+        """A legacy chat_sessions.sqlite3 without pending_clarification_json must upgrade seamlessly."""
+        import sqlite3
+        from backend.storage.chat_sessions import ChatSessionStore
+
+        # Create a legacy database WITHOUT the pending_clarification_json column
+        legacy_db = Path(self.temp_dir.name) / "legacy_chat_sessions.sqlite3"
+        with sqlite3.connect(legacy_db) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE sessions (
+                    session_id TEXT PRIMARY KEY,
+                    account_id TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    message_count INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE messages (
+                    message_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                );
+                CREATE TABLE draft_cards (
+                    card_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    message_id TEXT,
+                    draft_id TEXT,
+                    to_json TEXT NOT NULL DEFAULT '[]',
+                    cc_json TEXT NOT NULL DEFAULT '[]',
+                    bcc_json TEXT NOT NULL DEFAULT '[]',
+                    subject TEXT NOT NULL DEFAULT '',
+                    body TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'DRAFT',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                """
+            )
+
+        # Initialize the store on the legacy DB - this should trigger migration
+        store = ChatSessionStore(legacy_db)
+
+        # Verify the column was added by querying the schema
+        with sqlite3.connect(legacy_db) as conn:
+            cursor = conn.execute("PRAGMA table_info(sessions)")
+            columns = {row[1] for row in cursor.fetchall()}
+            self.assertIn("pending_clarification_json", columns, "Migration should add pending_clarification_json column")
+
+        # Verify get_pending_clarification and set_pending_clarification work without OperationalError
+        session = store.create_session("account-1", title="Migration Test")
+        session_id = session["session_id"]
+
+        # Should not raise OperationalError
+        payload = {"action": "send", "intent_bullets": "- test", "unresolved_names": ["jatin"]}
+        store.set_pending_clarification(session_id, payload)
+        loaded = store.get_pending_clarification(session_id)
+        self.assertEqual(loaded["unresolved_names"], ["jatin"])
+
+        store.clear_pending_clarification(session_id)
+        cleared = store.get_pending_clarification(session_id)
+        self.assertIsNone(cleared)
+
+        # Verify normal session operations still work
+        store.append_message(session_id, "user", "Hello")
+        messages = store.list_messages(session_id)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["content"], "Hello")
+
+
 if __name__ == "__main__":
     unittest.main()

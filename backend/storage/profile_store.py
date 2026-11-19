@@ -23,6 +23,14 @@ class ProfileStore:
         self.settings.ensure_local_directories()
         self._initialize_sqlite()
 
+    @staticmethod
+    def _ensure_column(connection: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+        """Idempotently add a column to a table if it does not already exist."""
+        cursor = connection.execute(f"PRAGMA table_info({table})")
+        columns = {row[1] for row in cursor.fetchall()}
+        if column not in columns:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
     def _initialize_sqlite(self) -> None:
         """Create a body-free metadata index for Tier 2 retrieval preparation."""
         with sqlite3.connect(self.settings.sqlite_path) as connection:
@@ -63,6 +71,8 @@ class ProfileStore:
                 );
                 """
             )
+            # Idempotent migrations for existing databases
+            # No new columns needed currently, but migration guard is in place for future changes
 
     def _index_messages(self, kind: str, records: Sequence[RawSentEmail | CleanedSentEmail]) -> None:
         """Refresh searchable metadata while keeping full personal text in local JSONL only."""

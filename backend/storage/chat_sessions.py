@@ -34,6 +34,14 @@ class ChatSessionStore:
         connection.row_factory = sqlite3.Row
         return connection
 
+    @staticmethod
+    def _ensure_column(connection: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+        """Idempotently add a column to a table if it does not already exist."""
+        cursor = connection.execute(f"PRAGMA table_info({table})")
+        columns = {row[1] for row in cursor.fetchall()}
+        if column not in columns:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
     def _initialize(self) -> None:
         with self._connect() as connection:
             connection.executescript(
@@ -77,6 +85,9 @@ class ChatSessionStore:
                     ON sessions(account_id, updated_at);
                 """
             )
+            # Idempotent migrations for existing databases
+            self._ensure_column(connection, "sessions", "pending_clarification_json",
+                               "pending_clarification_json TEXT NOT NULL DEFAULT '{}'")
 
     # --- sessions -----------------------------------------------------------
     def create_session(
