@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Check, ShieldCheck } from 'lucide-react'
+import { ConnectGmailModal } from '@/components/auth/ConnectGmailModal'
 import { Hero } from '@/components/landing/Hero'
 import { Navbar } from '@/components/layout/Navbar'
 import { Button } from '@/components/ui/Button'
@@ -61,6 +62,7 @@ function useReveal() {
 
 export function LandingPage() {
   const [oauthError, setOauthError] = useState<string | null>(null)
+  const [setupOpen, setSetupOpen] = useState(false)
   const [sent, setSent] = useState(false)
   const [streamed, setStreamed] = useState(0)
   useReveal()
@@ -393,6 +395,7 @@ export function LandingPage() {
         </div>
       </footer>
 
+      <ConnectGmailModal isOpen={setupOpen} onClose={() => setSetupOpen(false)} />
     </div>
   )
 }

@@ -1,9 +1,8 @@
 import { ArrowUpRight, Menu, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Wordmark } from '@/components/ui/Wordmark'
 import { cn } from '@/lib/utils'
-import { startGoogleSignIn } from '@/lib/googleAuth'
-import { EmailSignInModal } from '@/components/auth/EmailSignInModal'
 
 const NAV_LINKS = [
   { label: 'How it learns', href: '#how-it-learns' },
@@ -14,14 +13,6 @@ const NAV_LINKS = [
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false)
   const [open, setOpen] = useState(false)
-  const [emailSignInOpen, setEmailSignInOpen] = useState(false)
-  const openProteus = async () => {
-    try {
-      if (!(await startGoogleSignIn())) setEmailSignInOpen(true)
-    } catch {
-      setEmailSignInOpen(true)
-    }
-  }
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 16)
     onScroll(); window.addEventListener('scroll', onScroll, { passive: true })
@@ -34,7 +25,7 @@ export function Navbar() {
         <div className="hidden items-center gap-7 md:flex">
           {NAV_LINKS.map((link) => <a key={link.label} href={link.href} className="font-mono text-[11px] uppercase tracking-[0.14em] text-paper-label transition-colors hover:text-foam">{link.label}</a>)}
         </div>
-        <button type="button" onClick={openProteus} className="hidden items-center gap-2 rounded-pill border border-hairline px-4 py-2 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors hover:border-paper-label hover:bg-paper/5 md:inline-flex">Open Proteus <ArrowUpRight className="h-3.5 w-3.5" /></button>
+        <Link to="/workspace" className="hidden items-center gap-2 rounded-pill border border-hairline px-4 py-2 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors hover:border-paper-label hover:bg-paper/5 md:inline-flex">Open Proteus <ArrowUpRight className="h-3.5 w-3.5" /></Link>
         <button type="button" aria-label={open ? 'Close menu' : 'Open menu'} onClick={() => setOpen((value) => !value)} className="inline-flex h-9 w-9 items-center justify-center rounded-pill border border-hairline text-paper md:hidden">{open ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}</button>
       </nav>
       {open ? (
@@ -42,10 +33,9 @@ export function Navbar() {
           <nav className="flex flex-col" aria-label="Mobile navigation">
             {NAV_LINKS.map((link) => <a key={link.label} href={link.href} onClick={() => setOpen(false)} className="border-b border-hairline py-5 font-mono text-sm uppercase tracking-[0.16em] text-paper">{link.label}</a>)}
           </nav>
-          <button type="button" onClick={() => { setOpen(false); void openProteus() }} className="mt-auto rounded-pill bg-paper px-5 py-4 text-center font-mono text-sm uppercase tracking-[0.14em] text-ink">Open Proteus</button>
+          <Link to="/workspace" onClick={() => setOpen(false)} className="mt-auto rounded-pill bg-paper px-5 py-4 text-center font-mono text-sm uppercase tracking-[0.14em] text-ink">Open Proteus</Link>
         </div>
       ) : null}
-      <EmailSignInModal isOpen={emailSignInOpen} onClose={() => setEmailSignInOpen(false)} onSignedIn={() => { window.location.href = '/workspace' }} />
     </header>
   )
 }
