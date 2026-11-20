@@ -51,7 +51,12 @@ export function Navbar() {
         </div>
       ) : null}
       {authError ? <p role="alert" className="border-b border-ember/40 bg-ink/20 px-5 py-2 text-center text-[11px] text-paper-muted">{authError}</p> : null}
-      <EmailSignInModal isOpen={emailSignInOpen} onClose={() => setEmailSignInOpen(false)} onSignedIn={() => { window.location.href = '/workspace' }} />
+      <EmailSignInModal
+        isOpen={emailSignInOpen}
+        onClose={() => setEmailSignInOpen(false)}
+        onSignedIn={() => { window.location.href = '/workspace' }}
+        note="Google OAuth is not configured on this machine yet — sign in with your email to continue, then configure App Password or OAuth inside the workspace"
+      />
     </header>
   )
 }
