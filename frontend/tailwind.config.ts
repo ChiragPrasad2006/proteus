@@ -7,7 +7,7 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        cobalt: '#2A4BFF',
+        cobalt: '#2641E6',
         'cobalt-deep': '#1B33D6',
         ink: '#070B2E',
         paper: '#F3EFE6',
