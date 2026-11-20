@@ -37,12 +37,14 @@ Proteus implements a **4-Tier Hybrid Personalization Stack** that progressively 
 ---
 
 ## 🎨 Frontend Studio (`frontend/`)
-**Digital Naturalism & Brutalist Editorial UI**
-- **Palette**: `#0C0A09` Stone Black, `#1C1917` Warm Charcoal, `#D4F268` Acid Lime
-- **Typography**: `Newsreader` (editorial headlines) + `Instrument Sans` (UI)
+**Cobalt & Engraving — mythic editorial UI**
+- **Palette**: `#2A4BFF` Cobalt, `#1B33D6` Cobalt Deep, `#F3EFE6` Paper, `#070B2E` Ink, `#C9F0E3` Foam, `#FF5B2E` Ember, `#B8320C` Ember Ink
+- **Typography**: `Newsreader` (display serif) + `Instrument Sans` (UI) + `JetBrains Mono` (labels and metadata)
+- **Engraving artwork** — the 14 MB master SVG lives in `frontend/art-src/`; `npm run build:art` uses resvg/sharp to generate optimized WebP and alpha-raster assets outside Vite's source bundle
 - **1-click Google Sign-In onboarding** — OAuth flow completes in-browser
 - **Multi-account LLM chat workspace** — chat with your email brain, switch accounts instantly
-- **Real-time draft preview** — see the email as the model generates it
+- **Paper Letter Draft Card** — live draft bound to the active session's `draft_id`, with editable envelope/body, audience topology, tweak, save, and approve-and-learn actions
+- **Accessible contrast** — foam focus rings, paper-on-cobalt surfaces, and ember-ink text/stamps on paper
 
 ---
 

@@ -20,8 +20,8 @@ interface AppState {
   setActiveAccount: (id: string) => Promise<void>
   createSession: () => Promise<void>
   selectSession: (id: string) => Promise<void>
-  renameSession: (id: string, title: string) => void
-  deleteSession: (id: string) => void
+  renameSession: (id: string, title: string) => Promise<void>
+  deleteSession: (id: string) => Promise<void>
   toggleSidebar: () => void
   setAutoSend: (value: boolean) => void
   setTweakHint: (value: string) => void
@@ -57,6 +57,11 @@ export const useAppStore = create<AppState>()(
           if (sessionsResult.status === 'fulfilled') set({ sessions: sessionsResult.value.sessions, activeSessionId: sessionsResult.value.sessions[0]?.id ?? null })
           if (profileResult.status === 'fulfilled') set({ styleProfile: profileResult.value })
           if (contactsResult.status === 'fulfilled') set({ contacts: contactsResult.value.contacts ?? [] })
+          const firstSessionId = sessionsResult.status === 'fulfilled' ? sessionsResult.value.sessions[0]?.id : undefined
+          if (firstSessionId) {
+            const detail = await api.getSession(firstSessionId, id)
+            if (get().activeAccountId === id && get().activeSessionId === firstSessionId) set({ messages: detail.messages })
+          }
         } catch { /* State stays empty instead of retaining another account's data. */ }
       },
       createSession: async () => {
@@ -74,12 +79,24 @@ export const useAppStore = create<AppState>()(
           if (get().activeAccountId === accountId && get().activeSessionId === id) set({ messages: detail.messages })
         } catch { if (get().activeAccountId === accountId && get().activeSessionId === id) set({ messages: [] }) }
       },
-      renameSession: (id, title) => set((state) => ({ sessions: state.sessions.map((item) => item.id === id ? { ...item, title, isCustomTitle: true } : item) })),
-      deleteSession: (id: string) => set((state) => {
-        const sessions = state.sessions.filter((item) => item.id !== id)
-        const activeSessionId = state.activeSessionId === id ? (sessions[0]?.id ?? null) : state.activeSessionId
-        return { sessions, activeSessionId }
-      }),
+      renameSession: async (id, title) => {
+        const accountId = get().activeAccountId
+        if (!accountId) return
+        const updated = await api.renameSession(id, title, accountId)
+        if (get().activeAccountId !== accountId) return
+        set((state) => ({ sessions: state.sessions.map((item) => item.id === id ? { ...item, ...updated, isCustomTitle: true } : item) }))
+      },
+      deleteSession: async (id) => {
+        const accountId = get().activeAccountId
+        if (!accountId) return
+        await api.deleteSession(id, accountId)
+        if (get().activeAccountId !== accountId) return
+        set((state) => {
+          const sessions = state.sessions.filter((item) => item.id !== id)
+          const activeSessionId = state.activeSessionId === id ? (sessions[0]?.id ?? null) : state.activeSessionId
+          return { sessions, activeSessionId, messages: state.activeSessionId === id ? [] : state.messages }
+        })
+      },
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
       setAutoSend: (autoSend) => set({ autoSend }), setTweakHint: (tweakHint) => set({ tweakHint }),
       appendMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
