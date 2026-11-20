@@ -4,6 +4,7 @@ import { Wordmark } from '@/components/ui/Wordmark'
 import { cn } from '@/lib/utils'
 import { startGoogleSignIn } from '@/lib/googleAuth'
 import { EmailSignInModal } from '@/components/auth/EmailSignInModal'
+import { ApiError } from '@/lib/api'
 
 const NAV_LINKS = [
   { label: 'How it learns', href: '#how-it-learns' },
@@ -15,11 +16,15 @@ export function Navbar() {
   const [scrolled, setScrolled] = useState(false)
   const [open, setOpen] = useState(false)
   const [emailSignInOpen, setEmailSignInOpen] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
   const openProteus = async () => {
+    setAuthError(null)
     try {
       if (!(await startGoogleSignIn())) setEmailSignInOpen(true)
-    } catch {
-      setEmailSignInOpen(true)
+    } catch (error) {
+      setAuthError(error instanceof ApiError && error.status === 0
+        ? 'Cannot reach Proteus backend on 127.0.0.1:8000 — start Proteus.exe'
+        : 'Google sign-in could not be started. Please try again.')
     }
   }
   useEffect(() => {
@@ -45,6 +50,7 @@ export function Navbar() {
           <button type="button" onClick={() => { setOpen(false); void openProteus() }} className="mt-auto rounded-pill bg-paper px-5 py-4 text-center font-mono text-sm uppercase tracking-[0.14em] text-ink">Open Proteus</button>
         </div>
       ) : null}
+      {authError ? <p role="alert" className="border-b border-ember/40 bg-ink/20 px-5 py-2 text-center text-[11px] text-paper-muted">{authError}</p> : null}
       <EmailSignInModal isOpen={emailSignInOpen} onClose={() => setEmailSignInOpen(false)} onSignedIn={() => { window.location.href = '/workspace' }} />
     </header>
   )

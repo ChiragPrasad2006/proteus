@@ -2,10 +2,11 @@ import { Loader2, X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { api } from '@/lib/api'
 
-export function EmailSignInModal({ isOpen, onClose, onSignedIn }: {
+export function EmailSignInModal({ isOpen, onClose, onSignedIn, note }: {
   isOpen: boolean
   onClose: () => void
   onSignedIn?: () => void
+  note?: string
 }) {
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -42,6 +43,7 @@ export function EmailSignInModal({ isOpen, onClose, onSignedIn }: {
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="text-ink/55 hover:text-ink"><X className="h-5 w-5" /></button>
         </div>
+        {note ? <p className="mb-5 border-l-2 border-ember-ink pl-3 text-[12px] leading-relaxed text-ink/70">{note}</p> : null}
         <label className="mb-1 block font-mono text-[9px] uppercase tracking-wider text-ink/55">Email address</label>
         <input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="mb-4 w-full rounded-sm border border-ink/20 bg-white/40 px-3 py-2.5 text-ink focus:border-ink/50 focus:outline-none" />
         <label className="mb-1 block font-mono text-[9px] uppercase tracking-wider text-ink/55">Display name</label>

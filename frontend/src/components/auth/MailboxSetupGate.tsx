@@ -1,4 +1,4 @@
-import { Lock, Loader2, Shield, Upload } from 'lucide-react'
+import { Check, Copy, Lock, Loader2, Shield, Upload } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { api } from '@/lib/api'
 import { startGoogleSignIn } from '@/lib/googleAuth'
@@ -16,6 +16,8 @@ export function MailboxSetupGate({ account, onConnected, onAccountCreated }: {
   const [credentialsJson, setCredentialsJson] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [copiedRedirectUri, setCopiedRedirectUri] = useState(false)
+  const redirectUri = 'http://127.0.0.1:8000/api/auth/google/callback'
 
   const connect = async (event: FormEvent) => {
     event.preventDefault()
@@ -74,6 +76,16 @@ export function MailboxSetupGate({ account, onConnected, onAccountCreated }: {
     }
   }
 
+  const copyRedirectUri = async () => {
+    try {
+      await navigator.clipboard.writeText(redirectUri)
+      setCopiedRedirectUri(true)
+      window.setTimeout(() => setCopiedRedirectUri(false), 1800)
+    } catch {
+      setError('Could not copy the redirect URI. Select and copy it manually.')
+    }
+  }
+
   return (
     <main className="flex flex-1 items-center justify-center overflow-y-auto bg-cobalt-deep p-6">
       <section className="w-full max-w-xl rounded-sm border border-ink/15 bg-paper p-7 text-ink shadow-2xl">
@@ -89,8 +101,13 @@ export function MailboxSetupGate({ account, onConnected, onAccountCreated }: {
             </div>
             {tab === 'app-password' ? (
               <form onSubmit={connect}>
-                <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer" className="mt-5 inline-block text-sm text-ember-ink underline underline-offset-4">Open Google App Passwords ↗</a>
-                <div className="mt-4 grid gap-2 font-mono text-[10px] text-ink/65"><span>IMAP: imap.gmail.com:993</span><span>SMTP: smtp.gmail.com:465</span></div>
+                <ol className="mt-5 space-y-2.5 text-[12px] leading-relaxed text-ink/75">
+                  <li><span className="mr-2 font-mono text-[10px] text-ember-ink">01</span>Ensure <a href="https://myaccount.google.com/security" target="_blank" rel="noopener noreferrer" className="text-ember-ink underline underline-offset-2">2-Step Verification is enabled ↗</a> on your Google Account.</li>
+                  <li><span className="mr-2 font-mono text-[10px] text-ember-ink">02</span>Click <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer" className="text-ember-ink underline underline-offset-2">Open Google App Passwords ↗</a>.</li>
+                  <li><span className="mr-2 font-mono text-[10px] text-ember-ink">03</span>Enter <strong>Proteus</strong> as the app name and click <strong>Create</strong>.</li>
+                  <li><span className="mr-2 font-mono text-[10px] text-ember-ink">04</span>Copy the generated 16-character password and paste it below.</li>
+                </ol>
+                <div className="mt-5 font-mono text-[10px] text-ink/65">IMAP: imap.gmail.com:993 · SMTP: smtp.gmail.com:465</div>
                 <label className="mt-5 block font-mono text-[9px] uppercase tracking-wider text-ink/55">16-character App Password</label>
                 <input required type="password" value={password} onChange={(event) => setPassword(event.target.value.replace(/\s+/g, ''))} onPaste={(event) => { event.preventDefault(); setPassword(event.clipboardData.getData('text').replace(/\s+/g, '')) }} maxLength={16} className="mt-2 w-full rounded-sm border border-ink/20 bg-white/35 px-3 py-2 text-ink focus:border-ink/50 focus:outline-none" placeholder="xxxx xxxx xxxx xxxx" />
                 {error ? <p className="mt-3 text-sm text-ember-ink">{error}</p> : null}
@@ -98,7 +115,21 @@ export function MailboxSetupGate({ account, onConnected, onAccountCreated }: {
               </form>
             ) : (
               <form onSubmit={uploadCredentials} className="mt-5">
-                <p className="text-sm leading-relaxed text-ink/70">Upload your Google Cloud OAuth client_secret.json to enable identity sign-in and mailbox access.</p>
+                <ol className="space-y-2.5 text-[12px] leading-relaxed text-ink/75">
+                  <li><span className="mr-2 font-mono text-[10px] text-ember-ink">01</span>Open <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="text-ember-ink underline underline-offset-2">Google Cloud Console → Credentials ↗</a> and create or select a project.</li>
+                  <li><span className="mr-2 font-mono text-[10px] text-ember-ink">02</span>Go to <strong>APIs &amp; Services → Library</strong>, search <strong>Gmail API</strong>, and click <strong>Enable</strong>.</li>
+                  <li><span className="mr-2 font-mono text-[10px] text-ember-ink">03</span>Set the OAuth consent screen to <strong>External</strong>, use <strong>Proteus</strong> as the app name, and add your Gmail address under <strong>Test users</strong>.</li>
+                  <li><span className="mr-2 font-mono text-[10px] text-ember-ink">04</span>Under <strong>Credentials → + Create Credentials → OAuth client ID</strong>, choose <strong>Desktop app</strong> or <strong>Web application</strong> with this redirect URI:</li>
+                </ol>
+                <div className="mt-3 flex items-center gap-2 rounded-sm border border-ink/15 bg-white/35 p-2">
+                  <code className="min-w-0 flex-1 break-all font-mono text-[10px] text-ink/70">{redirectUri}</code>
+                  <button type="button" onClick={() => void copyRedirectUri()} className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-ink/20 px-2 py-1 font-mono text-[9px] uppercase text-ink/65 hover:border-ink/50" aria-label="Copy redirect URI">
+                    {copiedRedirectUri ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}{copiedRedirectUri ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                <ol start={5} className="mt-2.5 text-[12px] leading-relaxed text-ink/75">
+                  <li><span className="mr-2 font-mono text-[10px] text-ember-ink">05</span>Download the JSON file, upload it below, then click <strong>Save &amp; Sign In with Google</strong>.</li>
+                </ol>
                 <label className="relative mt-5 flex cursor-pointer items-center justify-center gap-2 rounded-sm border border-dashed border-ink/25 p-6 font-mono text-[11px] text-ink/65">
                   <Upload className="h-5 w-5" />{credentialsJson ? 'File selected ✓' : 'Choose or drop client_secret.json'}
                   <input type="file" accept=".json" className="absolute inset-0 cursor-pointer opacity-0" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => setCredentialsJson(String(reader.result ?? '')); reader.readAsText(file) }} />

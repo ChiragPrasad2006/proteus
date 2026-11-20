@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { EmailSignInModal } from '@/components/auth/EmailSignInModal'
 import { Button } from '@/components/ui/Button'
 import { startGoogleSignIn } from '@/lib/googleAuth'
+import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 const INSTALL_CMD = '.\\Proteus.exe'
@@ -81,12 +82,16 @@ function CopyInstallButton() {
  */
 export function Hero() {
   const [setupOpen, setSetupOpen] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
 
   const beginGoogleLogin = async () => {
+    setAuthError(null)
     try {
       if (!(await startGoogleSignIn())) setSetupOpen(true)
-    } catch {
-      setSetupOpen(true)
+    } catch (error) {
+      setAuthError(error instanceof ApiError && error.status === 0
+        ? 'Cannot reach Proteus backend on 127.0.0.1:8000 — start Proteus.exe'
+        : 'Google sign-in could not be started. Please try again.')
     }
   }
 
@@ -154,7 +159,7 @@ export function Hero() {
               onClick={beginGoogleLogin}
               className="rounded-pill bg-paper px-7 font-medium text-ink hover:-translate-y-px hover:bg-white"
             >
-                      Continue with Google
+              Continue with Google
             </Button>
             <Link
               to="https://github.com/ChiragPrasad2006/proteus"
@@ -165,6 +170,7 @@ export function Hero() {
               Read the source <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
+          {authError ? <p role="alert" className="mt-4 max-w-md border-l-2 border-ember px-3 py-2 text-sm text-paper-muted">{authError}</p> : null}
 
           {/* Install line */}
           <div
@@ -176,7 +182,12 @@ export function Hero() {
         </div>
       </div>
 
-      <EmailSignInModal isOpen={setupOpen} onClose={() => setSetupOpen(false)} onSignedIn={() => { window.location.href = '/workspace' }} />
+      <EmailSignInModal
+        isOpen={setupOpen}
+        onClose={() => setSetupOpen(false)}
+        onSignedIn={() => { window.location.href = '/workspace' }}
+        note="Google OAuth is not configured on this machine yet — sign in with your email to continue, then configure App Password or OAuth inside the workspace"
+      />
     </section>
   )
 }
