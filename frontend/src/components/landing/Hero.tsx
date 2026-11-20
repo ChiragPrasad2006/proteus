@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { ArrowRight, Copy, Check } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { ConnectGmailModal } from '@/components/auth/ConnectGmailModal'
+import { EmailSignInModal } from '@/components/auth/EmailSignInModal'
 import { Button } from '@/components/ui/Button'
 import { startGoogleSignIn } from '@/lib/googleAuth'
 import { cn } from '@/lib/utils'
@@ -154,7 +154,7 @@ export function Hero() {
               onClick={beginGoogleLogin}
               className="rounded-pill bg-paper px-7 font-medium text-ink hover:-translate-y-px hover:bg-white"
             >
-              Get started
+                      Continue with Google
             </Button>
             <Link
               to="https://github.com/ChiragPrasad2006/proteus"
@@ -176,7 +176,7 @@ export function Hero() {
         </div>
       </div>
 
-      <ConnectGmailModal isOpen={setupOpen} onClose={() => setSetupOpen(false)} />
+      <EmailSignInModal isOpen={setupOpen} onClose={() => setSetupOpen(false)} onSignedIn={() => { window.location.href = '/workspace' }} />
     </section>
   )
 }

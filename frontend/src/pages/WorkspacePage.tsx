@@ -25,6 +25,7 @@ export function WorkspacePage() {
   const activeSessionId = useAppStore((s) => s.activeSessionId)
   const autoSend = useAppStore((s) => s.autoSend)
   const account = useActiveAccount()
+  const accounts = useAppStore((s) => s.accounts)
   const setAccounts = useAppStore((s) => s.setAccounts)
   const updateAccount = useAppStore((s) => s.updateAccount)
   const setActiveAccount = useAppStore((s) => s.setActiveAccount)
@@ -32,7 +33,8 @@ export function WorkspacePage() {
   const [toast, setToast] = useState<string | null>(null)
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null)
   const [mobileDraftOpen, setMobileDraftOpen] = useState(false)
-  const handleMailboxConnected = useCallback((connectedAccount: Account) => { updateAccount({ ...connectedAccount, mailboxConnected: true }); void (async () => { try { const result = await api.listAccounts(); setAccounts(result.accounts, connectedAccount.id) } catch {} await setActiveAccount(connectedAccount.id) })() }, [setAccounts, setActiveAccount, updateAccount])
+  const handleMailboxConnected = useCallback((connectedAccount: Account) => { updateAccount({ ...connectedAccount, mailboxConnected: true }); void (async () => { const result = await api.listAccounts(); setAccounts(result.accounts, connectedAccount.id); await setActiveAccount(connectedAccount.id) })() }, [setAccounts, setActiveAccount, updateAccount])
+  const handleAccountCreated = useCallback((createdAccount: Account) => { void (async () => { const result = await api.listAccounts(); setAccounts(result.accounts, createdAccount.id); await setActiveAccount(createdAccount.id) })() }, [setAccounts, setActiveAccount])
   useEffect(() => {
     let disposed = false
     const hydrateFromRedirect = async () => { try { const result = await api.listAccounts(); if (disposed) return; const params = new URLSearchParams(window.location.search); const redirectAccountId = params.get('auth') === 'success' ? params.get('account_id') : null; const activeId = redirectAccountId ?? result.active_account_id; setAccounts(result.accounts, activeId); if (redirectAccountId) window.history.replaceState({}, '', '/workspace'); if (activeId) await setActiveAccount(activeId) } catch (err) { if (!disposed) setBanner(humanError(err)) } }
@@ -76,7 +78,7 @@ export function WorkspacePage() {
       <div className="flex min-w-0 flex-1 flex-col">
         <WorkspaceHeader />
         {toast ? <div role="status" aria-live="polite" className="flex items-center justify-between gap-3 border-b border-foam/40 bg-foam/10 px-5 py-2.5 text-[12px] text-foam"><p>{toast}</p><button type="button" onClick={() => setToast(null)} className="shrink-0 text-foam/75 hover:text-foam">Dismiss</button></div> : null}
-        {account && !account.mailboxConnected ? <MailboxSetupGate account={account} onConnected={handleMailboxConnected} /> : <>{showBanner ? <div className="flex items-center gap-2.5 border-b border-ember/40 bg-ember/10 px-4 py-2.5 lg:px-5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 text-ember" strokeWidth={1.8} /><p className="min-w-0 flex-1 truncate text-[11.5px] text-paper-muted">{banner ?? 'Local backend offline — running in demo mode. Start the API on 127.0.0.1:8000 for live drafting.'}</p>{banner ? <button type="button" aria-label="Dismiss" onClick={() => setBanner(null)} className="shrink-0 text-ember/70 hover:text-ember"><X className="h-4 w-4" /></button> : null}</div> : null}
+        {(!account || !account.mailboxConnected || accounts.length === 0) ? <MailboxSetupGate account={account} onConnected={handleMailboxConnected} onAccountCreated={handleAccountCreated} /> : <>{showBanner ? <div className="flex items-center gap-2.5 border-b border-ember/40 bg-ember/10 px-4 py-2.5 lg:px-5"><AlertTriangle className="h-3.5 w-3.5 shrink-0 text-ember" strokeWidth={1.8} /><p className="min-w-0 flex-1 truncate text-[11.5px] text-paper-muted">{banner ?? 'Local backend offline — running in demo mode. Start the API on 127.0.0.1:8000 for live drafting.'}</p>{banner ? <button type="button" aria-label="Dismiss" onClick={() => setBanner(null)} className="shrink-0 text-ember/70 hover:text-ember"><X className="h-4 w-4" /></button> : null}</div> : null}
           <div className="flex min-h-0 flex-1">
             <div className="flex min-w-0 flex-1 flex-col"><MessageThread messages={messages} busy={chat.isPending} onResolve={handleResolve} hideDraftCards onSelectDraft={(draftId) => { setSelectedDraftId(draftId); setMobileDraftOpen(true) }} /><PromptComposer busy={chat.isPending} onSend={handleSend} /></div>
             <aside className="hidden w-[30rem] shrink-0 overflow-y-auto border-l border-hairline bg-cobalt-deep p-4 xl:block" aria-label="Paper letter draft">{draftPane}</aside>
