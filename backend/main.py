@@ -900,7 +900,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Begin the Google OAuth2 desktop flow and return the consent URL."""
         client_file = _oauth_client_file()
         if client_file is None:
-            raise HTTPException(status_code=400, detail="Google OAuth credentials are not configured.")
+            raise HTTPException(status_code=400, detail="MISSING_OAUTH_CONFIG")
         connector = GmailConnector(
             client_file,
             runtime_settings.oauth_token_dir / "pending_identity.json",

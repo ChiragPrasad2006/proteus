@@ -1,10 +1,23 @@
-import { api } from '@/lib/api'
+import { ApiError, api } from '@/lib/api'
 
-/** Starts OAuth when configured; returns false so callers can open quick setup. */
+/** Starts the identity OAuth flow; returns false only for an explicit missing-config response. */
 export async function startGoogleSignIn(): Promise<boolean> {
-  const status = await api.googleAuthStatus()
-  if (!status.configured) return false
-  const { auth_url } = await api.googleAuthStart()
-  window.location.assign(auth_url)
-  return true
+  try {
+    const result = await api.googleAuthStart()
+    const authUrl = result?.auth_url || (result as unknown as { url?: string })?.url
+    if (!authUrl) {
+      throw new Error('Backend did not return an authorization URL.')
+    }
+    window.location.href = authUrl
+    return true
+  } catch (error) {
+    if (
+      error instanceof ApiError &&
+      (error.message === 'MISSING_OAUTH_CONFIG' ||
+       error.message.includes('not configured'))
+    ) {
+      return false
+    }
+    throw error
+  }
 }

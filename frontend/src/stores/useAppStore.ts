@@ -48,11 +48,16 @@ export const useAppStore = create<AppState>()(
       })),
       setActiveAccount: async (id) => {
         if (!get().accounts.some((account) => account.id === id)) return
+        const selectedAccount = get().accounts.find((account) => account.id === id)
         get().clearAccountState()
         set({ activeAccountId: id })
         try {
           await api.switchAccount(id)
-          const [sessionsResult, profileResult, contactsResult] = await Promise.allSettled([api.listSessions(id), api.profile(id), api.listContacts(id)])
+          const [sessionsResult, profileResult, contactsResult] = await Promise.allSettled([
+            api.listSessions(id),
+            selectedAccount?.mailboxConnected ? api.profile(id) : Promise.resolve(null),
+            api.listContacts(id),
+          ])
           if (get().activeAccountId !== id) return
           if (sessionsResult.status === 'fulfilled') set({ sessions: sessionsResult.value.sessions, activeSessionId: sessionsResult.value.sessions[0]?.id ?? null })
           if (profileResult.status === 'fulfilled') set({ styleProfile: profileResult.value })
