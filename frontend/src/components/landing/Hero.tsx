@@ -127,7 +127,7 @@ export function Hero() {
       <div className="relative z-[2] mx-auto flex w-full max-w-[1440px] items-center px-5 pt-28 pb-16 md:px-10 lg:pt-32 lg:pb-24">
         <div className="max-w-2xl">
           {/* Mono eyebrow */}
-          <p className="mb-8 font-mono text-[11px] uppercase tracking-[0.2em] text-paper-label motion-safe:animate-fade-in">
+          <p className="mb-8 font-mono text-[12px] uppercase tracking-[0.2em] text-paper-label motion-safe:animate-fade-in">
             Local-first · Runs on your machine
           </p>
 

@@ -41,7 +41,7 @@ function MiniChips() {
       {['Hi {first},', 'Best,', 'no emoji', 'high directness'].map((c) => (
         <span
           key={c}
-          className="rounded-full border border-accent/25 bg-accent/[0.08] px-2 py-1 font-mono text-[9px] text-accent"
+          className="rounded-full border border-accent/25 bg-accent/[0.08] px-2 py-1 font-mono text-[12px] text-accent"
         >
           {c}
         </span>
@@ -61,7 +61,7 @@ function MiniContacts() {
         <span
           key={label}
           className={cn(
-            'inline-flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br font-mono text-[9px] font-semibold text-ink ring-2 ring-surface',
+            'inline-flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br font-mono text-[12px] font-semibold text-ink ring-2 ring-surface',
             hue,
           )}
         >
@@ -81,7 +81,7 @@ function MiniMeter() {
         ['Verbosity', 34],
       ].map(([label, pct]) => (
         <div key={label as string}>
-          <div className="mb-1 flex justify-between font-mono text-[9px] uppercase tracking-wider text-fg-faint">
+          <div className="mb-1 flex justify-between font-mono text-[12px] uppercase tracking-wider text-fg-faint">
             <span>{label}</span>
             <span>{pct}%</span>
           </div>
@@ -97,7 +97,7 @@ function MiniMeter() {
 function MiniGate() {
   return (
     <div className="w-full rounded-xl border border-[#92400e]/50 bg-[#f59e0b]/[0.07] p-3">
-      <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-[#fbbf24]">
+      <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[12px] uppercase tracking-wider text-[#fbbf24]">
         <ShieldCheck className="h-3 w-3" /> Review required
       </div>
       <div className="h-1.5 w-4/5 rounded-full bg-white/[0.1]" />
@@ -112,7 +112,7 @@ function MiniRetrieval() {
       {[1, 0.62, 0.41].map((o, i) => (
         <div key={i} className="flex items-center gap-2">
           <div className="h-1.5 flex-1 rounded-full bg-white/[0.09]" />
-          <span className="font-mono text-[9px] text-accent" style={{ opacity: o }}>
+          <span className="font-mono text-[12px] text-accent" style={{ opacity: o }}>
             {o.toFixed(2)}
           </span>
         </div>
@@ -178,7 +178,7 @@ export function ShowcaseGrid() {
     <section id="method" className="relative mx-auto max-w-7xl px-6 py-24 lg:px-10 lg:py-32">
       <div className="mb-14 flex flex-col justify-between gap-6 md:flex-row md:items-end">
         <div className="max-w-2xl">
-          <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.24em] text-accent">
+          <p className="mb-4 font-mono text-[12px] uppercase tracking-[0.24em] text-accent">
             The method
           </p>
           <h2 className="font-display text-4xl font-light leading-tight tracking-tight text-fg text-balance sm:text-5xl">
@@ -204,7 +204,7 @@ export function ShowcaseGrid() {
               )}
             >
               <div className="flex items-center justify-between">
-                <span className="font-mono text-[11px] tracking-[0.2em] text-fg-faint">
+                <span className="font-mono text-[12px] tracking-[0.2em] text-fg-faint">
                   {card.index}
                 </span>
                 <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-hairline bg-white/[0.03] transition-colors duration-300 ease-proteus group-hover:border-accent/40">
@@ -230,14 +230,14 @@ export function ShowcaseGrid() {
         {STATS.map((s) => (
           <div key={s.label} className="bg-surface px-6 py-7 text-center">
             <p className="font-display text-4xl leading-none text-accent">{s.value}</p>
-            <p className="mt-2.5 font-mono text-[10px] uppercase tracking-[0.18em] text-fg-faint">
+            <p className="mt-2.5 font-mono text-[12px] uppercase tracking-[0.18em] text-fg-faint">
               {s.label}
             </p>
           </div>
         ))}
       </div>
 
-      <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[11px] uppercase tracking-[0.14em] text-fg-faint">
+      <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[12px] uppercase tracking-[0.14em] text-fg-faint">
         <span className="inline-flex items-center gap-2">
           <CheckCheck className="h-3.5 w-3.5 text-accent/70" /> Edits feed back as learned rules
         </span>

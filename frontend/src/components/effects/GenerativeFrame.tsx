@@ -36,19 +36,19 @@ export function GenerativeFrame({ className }: { className?: string }) {
         </div>
 
         {/* Catalog label */}
-        <div className="absolute left-6 top-6 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.24em] text-fg-faint">
+        <div className="absolute left-6 top-6 flex items-center gap-2 font-mono text-[12px] uppercase tracking-[0.24em] text-fg-faint">
           <span className="h-1.5 w-1.5 rounded-full bg-accent" />
           Catalog · 04 / Stylometric Aperture
         </div>
 
-        <div className="absolute right-6 top-6 font-mono text-[10px] uppercase tracking-[0.24em] text-fg-faint">
+        <div className="absolute right-6 top-6 font-mono text-[12px] uppercase tracking-[0.24em] text-fg-faint">
           v2.5 · 3B
         </div>
       </div>
 
       {/* Sticky-note badge */}
-      <div className="absolute -bottom-6 -left-6 w-[15.5rem] rotate-[-4deg] rounded-[18px] border border-accent/25 bg-accent p-4 text-ink shadow-[0_18px_40px_-18px_rgba(0,0,0,0.8)] transition-transform duration-300 ease-proteus hover:rotate-[-2deg]">
-        <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-ink/70">
+      <div className="absolute -bottom-6 -left-6 w-[15.5rem] rotate-[-4deg] rounded-[18px] border border-accent/25 bg-accent p-4 text-ink transition-transform duration-300 ease-proteus hover:rotate-[-2deg]">
+        <div className="mb-2 flex items-center gap-1.5 font-mono text-[12px] uppercase tracking-[0.2em] text-ink/70">
           <Sparkles className="h-3 w-3" /> Sticky note
         </div>
         <p className="font-display text-[15px] leading-snug text-ink">

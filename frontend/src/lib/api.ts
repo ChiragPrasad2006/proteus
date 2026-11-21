@@ -46,6 +46,8 @@ export interface SessionListResponse {
 export interface SessionDetailResponse {
   session: Session
   messages: ChatMessage[]
+  /** Draft cards hydrated into the shared useDraftState store. */
+  drafts: EmailDraft[]
 }
 
 export interface GoogleOAuthCredentialsStatus {
@@ -70,8 +72,9 @@ const asNumber = (value: unknown, fallback = 0): number =>
 
 function normalizeRecipient(value: unknown): RecipientContact {
   const raw = asRecord(value)
-  const email = asString(raw.email ?? raw.matched_email)
-  const name = asString(raw.name ?? raw.full_name ?? raw.matched_name) || email
+  // Legacy corpus rows can carry literal quotes around the address — strip them.
+  const email = asString(raw.email ?? raw.matched_email).replace(/^["']+|["']+$/g, '')
+  const name = asString(raw.name ?? raw.full_name ?? raw.matched_name).replace(/^["']+|["']+$/g, '') || email
   const tiers: RelationshipTier[] = ['executive_or_client', 'peer', 'direct_report', 'external', 'unknown']
   const rawTier = raw.tier ?? raw.relationship_tier
   const tier = tiers.includes(rawTier as RelationshipTier) ? rawTier as RelationshipTier : 'unknown'
@@ -82,7 +85,7 @@ function normalizeRecipient(value: unknown): RecipientContact {
     tier,
     relationship: asString(raw.relationship) || 'Unknown',
     confidence: asNumber(raw.confidence),
-    sentCount: asNumber(raw.sentCount ?? raw.sent_count),
+    sentCount: asNumber(raw.sentCount ?? raw.sent_count ?? raw.interaction_count),
     isNew: Boolean(raw.isNew ?? raw.is_new),
   }
 }
@@ -120,6 +123,7 @@ function normalizeDraftWarning(value: unknown, index: number): DraftWarning {
 
 function normalizeEmailDraft(value: unknown, reviewReason: string): EmailDraft {
   const raw = asRecord(value)
+  const stripQuotes = (list: unknown) => asStringArray(list).map((email) => email.replace(/^["']+|["']+$/g, ''))
   const rawWarnings = Array.isArray(raw.warnings) ? raw.warnings : []
   const warningInputs = rawWarnings.length > 0
     ? rawWarnings
@@ -130,9 +134,9 @@ function normalizeEmailDraft(value: unknown, reviewReason: string): EmailDraft {
   const examples = Array.isArray(rawExamples) ? rawExamples : []
   return {
     id: asString(raw.draft_id ?? raw.id ?? raw.card_id),
-    to: asStringArray(raw.to),
-    cc: asStringArray(raw.cc ?? raw.cc_emails),
-    bcc: asStringArray(raw.bcc ?? raw.bcc_emails),
+    to: stripQuotes(raw.to),
+    cc: stripQuotes(raw.cc ?? raw.cc_emails),
+    bcc: stripQuotes(raw.bcc ?? raw.bcc_emails),
     subject: asString(raw.subject),
     body: asString(raw.body ?? raw.draft),
     warnings: warningInputs.map(normalizeDraftWarning),
@@ -171,6 +175,7 @@ export function normalizeChatSessionDetail(value: unknown): SessionDetailRespons
   const raw = asRecord(value)
   const session = normalizeSessionSummary(raw.session)
   const draftCards = Array.isArray(raw.draft_cards) ? raw.draft_cards : []
+  const drafts = draftCards.map((card) => normalizeEmailDraft(card, asString(asRecord(card).review_reason)))
   const rawMessages = Array.isArray(raw.messages) ? raw.messages : []
   const messages = rawMessages.map((value): ChatMessage => {
     const message = asRecord(value)
@@ -191,11 +196,11 @@ export function normalizeChatSessionDetail(value: unknown): SessionDetailRespons
       status: metadata.status === 'NEEDS_CLARIFICATION' ? 'NEEDS_CLARIFICATION' : 'done',
       reasoning: [],
       contacts: [],
-      draft: card ? normalizeEmailDraft(card, asString(card.review_reason)) : null,
+      draftId: card ? asString(card.draft_id ?? card.card_id ?? card.id) || null : null,
       clarification,
     }
   })
-  return { session, messages }
+  return { session, messages, drafts }
 }
 
 export function normalizeChatTurnResponse(value: unknown): ChatTurnResponse {
@@ -404,11 +409,12 @@ export const api = {
 
   /* ── Conversational workspace ───────────────────────────────────────── */
 
-  chatTurn: async (payload: { session_id: string; user_message: string; auto_send?: boolean }, accountId?: string) => {
+  chatTurn: async (payload: { session_id: string; user_message: string; auto_send?: boolean }, accountId?: string, signal?: AbortSignal) => {
     const response = await request<unknown>('/chat/turn', {
       method: 'POST',
       body: JSON.stringify(payload),
       accountId,
+      signal,
     })
     return normalizeChatTurnResponse(response)
   },

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, ShieldCheck } from 'lucide-react'
+import { Check, ShieldCheck, X } from 'lucide-react'
 import { ConnectGmailModal } from '@/components/auth/ConnectGmailModal'
 import { Hero } from '@/components/landing/Hero'
 import { Navbar } from '@/components/layout/Navbar'
@@ -61,25 +61,24 @@ function useReveal() {
 }
 
 export function LandingPage() {
-  const [oauthError, setOauthError] = useState<string | null>(null)
+  const [oauthError, setOauthError] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('auth') === 'error' ? (params.get('reason') || 'Google sign-in could not be completed.') : null
+  })
   const [setupOpen, setSetupOpen] = useState(false)
   const [sent, setSent] = useState(false)
-  const [streamed, setStreamed] = useState(0)
+  const [streamed, setStreamed] = useState(() =>
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches ? DEMO_EMAILS.length : 0,
+  )
   useReveal()
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    if (params.get('auth') === 'error') {
-      setOauthError(params.get('reason') || 'Google sign-in could not be completed.')
-      window.history.replaceState({}, '', '/')
-    }
+    if (params.get('auth') === 'error') window.history.replaceState({}, '', '/')
   }, [])
 
   useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      setStreamed(DEMO_EMAILS.length)
-      return
-    }
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
     const timer = window.setInterval(
       () => setStreamed((value) => Math.min(DEMO_EMAILS.length, value + 1)),
       720,
@@ -94,9 +93,12 @@ export function LandingPage() {
       {oauthError ? (
         <div
           role="status"
-          className="mx-auto mt-20 max-w-7xl border border-ember/60 bg-ember/10 px-4 py-3 text-sm text-paper"
+          className="mx-auto mt-20 flex max-w-7xl items-center gap-3 border border-ember/60 bg-ember/10 px-4 py-3 text-sm text-paper"
         >
-          {oauthError}
+          <p className="min-w-0 flex-1">{oauthError}</p>
+          <button type="button" onClick={() => setOauthError(null)} aria-label="Dismiss sign-in error" className="shrink-0 text-paper-muted hover:text-paper">
+            <X className="h-4 w-4" />
+          </button>
         </div>
       ) : null}
 
@@ -105,7 +107,7 @@ export function LandingPage() {
         <Hero />
 
         {/* ── 2. MARQUEE STRIP ── */}
-        <div className="overflow-hidden border-y border-hairline py-4 font-mono text-[11px] uppercase tracking-[0.22em] text-paper-label">
+        <div className="overflow-hidden border-y border-hairline py-4 font-mono text-[12px] uppercase tracking-[0.22em] text-paper-label">
           <div className="flex w-max animate-marquee motion-reduce:animate-none">
             <span className="px-8">
               Local-first&nbsp;/&nbsp;No telemetry&nbsp;/&nbsp;Multi-account&nbsp;/&nbsp;Your
@@ -122,7 +124,7 @@ export function LandingPage() {
         <section id="how-it-learns" className="mx-auto max-w-[1440px] px-5 py-24 md:px-10 md:py-36">
           <div className="reveal-section mb-20 flex flex-col justify-between gap-8 md:flex-row md:items-end">
             <div>
-              <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.2em] text-paper-label">
+              <p className="mb-4 font-mono text-[12px] uppercase tracking-[0.2em] text-paper-label">
                 Four tiers of becoming
               </p>
               <h2 className="max-w-[10ch] font-display text-6xl font-light leading-[0.9] tracking-[-0.04em] md:text-8xl">
@@ -151,7 +153,7 @@ export function LandingPage() {
                       loading="lazy"
                       className="engraving-multiply h-full w-full object-contain transition-transform duration-700 ease-proteus group-hover:scale-[1.03]"
                     />
-                    <span className="absolute bottom-3 left-3 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-label">
+                    <span className="absolute bottom-3 left-3 font-mono text-[12px] uppercase tracking-[0.18em] text-paper-label">
                       {tier.numeral}&nbsp;/&nbsp;{tier.title}
                     </span>
                   </div>
@@ -159,7 +161,7 @@ export function LandingPage() {
 
                 {/* Copy */}
                 <div className={index % 2 ? 'lg:order-1' : ''}>
-                  <span className="font-display text-8xl font-light leading-none text-paper/25">
+                  <span aria-hidden="true" className="font-display text-8xl font-light leading-none text-paper/25">
                     {tier.numeral}
                   </span>
                   <h3 className="mt-2 font-display text-6xl font-light tracking-[-0.04em] transition-all duration-500 md:text-8xl">
@@ -179,7 +181,7 @@ export function LandingPage() {
         <section className="bg-cobalt-deep py-24 md:py-32">
           <div className="reveal-section mx-auto grid max-w-[1440px] gap-14 px-5 md:px-10 lg:grid-cols-[0.8fr_1.2fr]">
             <div>
-              <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.2em] text-paper-label">
+              <p className="mb-4 font-mono text-[12px] uppercase tracking-[0.2em] text-paper-label">
                 Live style profile
               </p>
               <h2 className="font-display text-5xl font-light leading-[0.95] tracking-[-0.04em] md:text-7xl">
@@ -192,7 +194,7 @@ export function LandingPage() {
 
             <div className="bg-paper p-7 text-ink shadow-none md:p-10" style={{ borderRadius: '2px' }}>
               <div className="flex items-center justify-between border-b border-ink/15 pb-5">
-                <span className="font-mono text-[11px] uppercase tracking-[0.16em]">
+                <span className="font-mono text-[12px] uppercase tracking-[0.16em]">
                   Stylometry fingerprint
                 </span>
                 <span
@@ -206,32 +208,32 @@ export function LandingPage() {
 
               <div className="grid gap-7 py-7 sm:grid-cols-2">
                 <div>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink/60">
+                  <p className="font-mono text-[12px] uppercase tracking-[0.16em] text-ink/60">
                     Top greeting
                   </p>
                   <p className="mt-2 font-display text-3xl">Hi {'{first}'},</p>
                 </div>
                 <div>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink/60">
+                  <p className="font-mono text-[12px] uppercase tracking-[0.16em] text-ink/60">
                     Exact sign-off
                   </p>
                   <p className="mt-2 font-display text-3xl">Best,</p>
                 </div>
                 <div>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink/60">
+                  <p className="font-mono text-[12px] uppercase tracking-[0.16em] text-ink/60">
                     Avg sentence
                   </p>
                   <p className="mt-2 font-display text-3xl">14.2 words</p>
                 </div>
                 <div>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink/60">
+                  <p className="font-mono text-[12px] uppercase tracking-[0.16em] text-ink/60">
                     Tone
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {['Direct', 'Warm', 'Concise'].map((tone) => (
                       <span
                         key={tone}
-                        className="rounded-pill border border-ink/20 px-3 py-1 font-mono text-[10px] uppercase tracking-wider"
+                        className="rounded-pill border border-ink/20 px-3 py-1 font-mono text-[12px] uppercase tracking-wider"
                       >
                         {tone}
                       </span>
@@ -244,7 +246,7 @@ export function LandingPage() {
                 {DEMO_EMAILS.slice(0, streamed).map((email) => (
                   <p
                     key={email.greeting}
-                    className="flex justify-between border-b border-ink/10 py-2 font-mono text-[11px] text-ink/70"
+                    className="flex justify-between border-b border-ink/10 py-2 font-mono text-[12px] text-ink/70"
                   >
                     <span>
                       {email.greeting} … {email.signoff}
@@ -255,7 +257,7 @@ export function LandingPage() {
                   </p>
                 ))}
                 {streamed === 0 ? (
-                  <p className="py-2 font-mono text-[11px] text-ink/50">
+                  <p className="py-2 font-mono text-[12px] text-ink-muted">
                     Listening to local corpus…
                   </p>
                 ) : null}
@@ -268,7 +270,7 @@ export function LandingPage() {
         <section id="safety" className="mx-auto max-w-[1440px] px-5 py-24 md:px-10 md:py-36">
           <div className="reveal-section grid gap-12 lg:grid-cols-[0.8fr_1.2fr] lg:items-center">
             <div>
-              <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.2em] text-paper-label">
+              <p className="mb-4 font-mono text-[12px] uppercase tracking-[0.2em] text-paper-label">
                 The safety gate
               </p>
               <h2 className="max-w-[10ch] font-display text-6xl font-light leading-[0.92] tracking-[-0.04em] md:text-8xl">
@@ -284,7 +286,7 @@ export function LandingPage() {
             <div className="relative bg-paper p-7 text-ink md:p-10" style={{ borderRadius: '2px' }}>
               {!sent ? (
                 <span
-                  className="-rotate-6 absolute right-7 top-7 border-2 border-ember-ink px-3 py-1 font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-ember-ink"
+                  className="-rotate-6 absolute right-7 top-7 border-2 border-ember-ink px-3 py-1 font-mono text-[12px] font-medium uppercase tracking-[0.16em] text-ember-ink"
                   aria-label="Pending review"
                 >
                   Pending review
@@ -292,9 +294,9 @@ export function LandingPage() {
               ) : null}
 
               <div className="border-b border-ink/15 pb-5">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink/60">To</p>
+                <p className="font-mono text-[12px] uppercase tracking-[0.16em] text-ink/60">To</p>
                 <p className="mt-1">manu@example.com</p>
-                <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.16em] text-ink/60">
+                <p className="mt-4 font-mono text-[12px] uppercase tracking-[0.16em] text-ink/60">
                   Subject
                 </p>
                 <p className="mt-1 font-display text-2xl">Following up on the launch plan</p>
@@ -344,7 +346,7 @@ export function LandingPage() {
             className="engraving-invert pointer-events-none absolute -right-28 top-0 h-full max-h-[54rem] opacity-[0.08]"
           />
           <div className="reveal-section relative mx-auto max-w-[1440px] px-5 md:px-10">
-            <p className="mb-5 font-mono text-[11px] uppercase tracking-[0.2em] text-paper-label">
+            <p className="mb-5 font-mono text-[12px] uppercase tracking-[0.2em] text-paper-label">
               Privacy is the architecture
             </p>
             <h2 className="max-w-[12ch] font-display text-7xl font-light leading-[0.88] tracking-[-0.045em] md:text-[9rem]">
@@ -352,7 +354,7 @@ export function LandingPage() {
               <span className="italic">Zero</span>{' '}
               telemetry.
             </h2>
-            <div className="mt-14 flex flex-wrap gap-x-8 gap-y-4 font-mono text-[11px] uppercase tracking-[0.18em] text-paper-label">
+            <div className="mt-14 flex flex-wrap gap-x-8 gap-y-4 font-mono text-[12px] uppercase tracking-[0.18em] text-paper-label">
               {['SQLite', 'LanceDB', 'Ollama', 'Qwen3:8B', 'MIT'].map((item) => (
                 <span key={item}>{item}</span>
               ))}
@@ -370,7 +372,7 @@ export function LandingPage() {
             </p>
           </div>
           <div className="text-right">
-            <div className="flex justify-end gap-5 font-mono text-[11px] uppercase tracking-[0.15em]">
+            <div className="flex justify-end gap-5 font-mono text-[12px] uppercase tracking-[0.15em]">
               <a
                 href="https://github.com/ChiragPrasad2006/proteus"
                 target="_blank"
@@ -388,7 +390,7 @@ export function LandingPage() {
                 License
               </a>
             </div>
-            <p className="mt-4 font-mono text-[11px] uppercase tracking-[0.15em] text-paper-label">
+            <p className="mt-4 font-mono text-[12px] uppercase tracking-[0.15em] text-paper-label">
               Built locally. Becomes you.
             </p>
           </div>

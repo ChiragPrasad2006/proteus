@@ -12,11 +12,11 @@ export function StickyNoteCTA() {
           {/* Push-pin */}
           <span
             aria-hidden
-            className="absolute left-1/2 top-6 h-4 w-4 -translate-x-1/2 rounded-full bg-accent shadow-[0_6px_14px_-2px_rgba(212,242,104,0.7)]"
+            className="absolute left-1/2 top-6 h-4 w-4 -translate-x-1/2 rounded-full bg-accent"
           />
 
-          <div className="relative w-full max-w-xl rotate-[-1.5deg] rounded-[22px] bg-accent p-8 text-ink shadow-[0_40px_80px_-40px_rgba(0,0,0,0.95)] transition-transform duration-300 ease-proteus hover:rotate-[-0.5deg] sm:p-10">
-            <div className="mb-4 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.22em] text-ink/60">
+          <div className="relative w-full max-w-xl rotate-[-1.5deg] rounded-[22px] bg-accent p-8 text-ink transition-transform duration-300 ease-proteus hover:rotate-[-0.5deg] sm:p-10">
+            <div className="mb-4 flex items-center gap-2 font-mono text-[12px] uppercase tracking-[0.22em] text-ink/60">
               <Sparkles className="h-3.5 w-3.5" /> Ready when you are
             </div>
 
@@ -40,7 +40,7 @@ export function StickyNoteCTA() {
                   Launch the workspace
                 </Button>
               </Link>
-              <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-ink/60">
+              <span className="font-mono text-[12px] uppercase tracking-[0.16em] text-ink/60">
                 No card · runs offline
               </span>
             </div>

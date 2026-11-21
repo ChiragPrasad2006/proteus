@@ -43,14 +43,17 @@ export function formatGpuMemory(mib?: number): string {
   return `${(mib / 1024).toFixed(1)} GB`
 }
 
-/** Group sessions into Today / Previous 7 Days / Earlier buckets. */
-export type SessionBucket = 'Today' | 'Previous 7 Days' | 'Earlier'
+/** Group sessions into Pinned / Today / Yesterday / Previous 7 Days / Older. */
+export type SessionBucket = 'Today' | 'Yesterday' | 'Previous 7 Days' | 'Older'
 
 export function sessionBucket(iso: string, now: Date = new Date()): SessionBucket {
   const then = new Date(iso)
+  if (Number.isNaN(then.getTime())) return 'Older'
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const startOfYesterday = new Date(startOfToday.getTime() - 24 * 60 * 60 * 1000)
   const sevenDaysAgo = new Date(startOfToday.getTime() - 7 * 24 * 60 * 60 * 1000)
   if (then >= startOfToday) return 'Today'
+  if (then >= startOfYesterday) return 'Yesterday'
   if (then >= sevenDaysAgo) return 'Previous 7 Days'
-  return 'Earlier'
+  return 'Older'
 }

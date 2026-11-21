@@ -6,12 +6,23 @@
   --color-cobalt-deep: #1B33D6;
   --color-ink: #070B2E;
   --color-paper: #F3EFE6;
-  --color-paper-muted: rgba(243, 239, 230, 0.82);
+  /* WCAG AA: 5.59:1 on cobalt-deep, 4.77:1 on cobalt. */
+  --color-paper-muted: rgba(243, 239, 230, 0.84);
+  /* WCAG AA: 5.26:1 on cobalt. */
   --color-paper-label: rgba(243, 239, 230, 0.90);
   --color-foam: #C9F0E3;
+  --color-foam-ink: #0F5132;
   --color-ember: #FF5B2E;
   --color-ember-ink: #B8320C;
   --color-hairline: rgba(243, 239, 230, 0.28);
+  --color-ink-hairline: rgba(7, 11, 46, 0.14);
+  /* Solid AA-safe inks on paper: muted 7.49:1, faint 5.35:1. */
+  --color-ink-muted: #454A6B;
+  --color-ink-faint: #5B607E;
+  --color-send-hover: #2A4BFF;
+  /* Landing accent (lime) + panel surface. Ink on accent: 15.2:1 · accent on cobalt: ~10:1. */
+  --color-accent: #D4F268;
+  --color-surface: #1B33D6;
   --font-display: 'Newsreader', Georgia, ui-serif, serif;
   --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
@@ -23,16 +34,25 @@
   --animate-breathe: breathe 14s ease-in-out infinite;
   --animate-marquee: marquee 28s linear infinite;
   --animate-pulse-ring: pulse-ring 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-pulse-once: pulse-once 1.2s ease-out 1;
   @keyframes fade-up { 0% { opacity: 0; transform: translateY(24px); } 100% { opacity: 1; transform: translateY(0); } }
   @keyframes fade-in { 0% { opacity: 0; } 100% { opacity: 1; } }
   @keyframes breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
   @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
   @keyframes pulse-ring { 0% { transform: scale(0.9); opacity: 0.7; } 70%, 100% { transform: scale(1.7); opacity: 0; } }
+  @keyframes shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+  @keyframes pulse-once { 0% { border-color: var(--color-ember-ink); } 50% { border-color: rgba(184, 50, 12, 0.35); } 100% { border-color: var(--color-ember-ink); } }
 }
 
 @layer base {
   :root {
     --cobalt: #2641E6;
+    --cobalt-deep: #1B33D6;
+    --ink: #070B2E;
+    --paper: #F3EFE6;
+    --foam: #C9F0E3;
+    --ember: #FF5B2E;
   }
   html { color-scheme: light; -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
   body { margin: 0; min-height: 100svh; background: var(--color-cobalt); color: var(--color-paper); font-family: var(--font-sans); font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
@@ -41,6 +61,8 @@
   button, input, textarea, select { font-family: inherit; }
   ::selection { background: var(--color-foam); color: var(--color-ink); }
   :focus-visible { outline: 2px solid var(--color-foam); outline-offset: 2px; }
+  /* AA-visible focus ring on paper surfaces (foam is too light there). */
+  .on-paper :focus-visible, .on-paper:focus-visible { outline-color: var(--color-ink); }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(243,239,230,.24); border: 2px solid transparent; background-clip: padding-box; }
@@ -51,6 +73,7 @@
 @utility engraving-multiply { mix-blend-mode: multiply; }
 @utility engraving-invert { filter: invert(1); }
 @utility reveal-section { opacity: 0; transform: translateY(28px); transition: opacity 700ms cubic-bezier(0.16,1,0.3,1), transform 700ms cubic-bezier(0.16,1,0.3,1); &.is-visible { opacity: 1; transform: translateY(0); } }
+@utility shimmer-line { background: linear-gradient(90deg, rgba(243,239,230,0.10) 25%, rgba(243,239,230,0.28) 50%, rgba(243,239,230,0.10) 75%); background-size: 200% 100%; animation: shimmer 1.6s linear infinite; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }

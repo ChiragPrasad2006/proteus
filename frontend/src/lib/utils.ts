@@ -16,6 +16,11 @@ export function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
 }
 
+/** RFC-lite email validation used by recipient chips and clarification inputs. */
+export function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+}
+
 /** Deterministic initials from a display name. */
 export function initialsFrom(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean)

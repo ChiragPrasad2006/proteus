@@ -64,6 +64,63 @@ export interface RetrievedExample {
 
 export type DraftStatus = 'DRAFT' | 'PENDING_REVIEW' | 'SENT' | 'FAILED'
 
+/**
+ * Unified client-side draft lifecycle. Both the chat Activity Action Cards
+ * and the Paper Letter Draft Panel read/write this single status so they can
+ * never disagree (e.g. "held for review" in chat while the panel says SENT).
+ */
+export type UnifiedDraftStatus =
+  | 'draft'
+  | 'pending_review'
+  | 'sending_countdown'
+  | 'sending'
+  | 'sent'
+  | 'failed'
+
+export interface DraftVersion {
+  /** v1, v2, v3 … */
+  label: string
+  subject: string
+  body: string
+  createdAt: string
+  source: 'generated' | 'refined'
+}
+
+export interface LearnedRule {
+  id: string
+  text: string
+  scope: 'global' | 'recipient'
+}
+
+/** A draft owned by the shared `useDraftState` store, keyed by draft_id. */
+export interface WorkspaceDraft {
+  id: string
+  sessionId: string
+  accountId: string
+  to: string[]
+  cc: string[]
+  bcc: string[]
+  subject: string
+  body: string
+  status: UnifiedDraftStatus
+  /** Raw backend reason — internal only, never rendered verbatim. */
+  reviewReason?: string
+  modelUsed: string
+  createdAt: string
+  updatedAt: string
+  sentAt?: string
+  sendError?: string
+  /** Epoch ms when the 10s undo-send countdown ends. */
+  countdownEndsAt?: number
+  /** Status to restore if the countdown is undone. */
+  preCountdownStatus?: UnifiedDraftStatus
+  versions: DraftVersion[]
+  learnedRules: LearnedRule[]
+  /** Last machine-generated text, for the "What I learned" edit diff. */
+  generatedSubject: string
+  generatedBody: string
+}
+
 export type WarningSeverity = 'info' | 'warning' | 'danger'
 
 export interface DraftWarning {
@@ -111,8 +168,8 @@ export interface ChatMessage {
   reasoning?: string[]
   /** Assistant-only: contacts resolved from the local corpus. */
   contacts?: RecipientContact[]
-  /** Assistant-only: an interactive draft awaiting first-recipient review. */
-  draft?: EmailDraft | null
+  /** Assistant-only: id of the draft in the shared useDraftState store. */
+  draftId?: string | null
   /** Assistant-only: a name the agent needs the user to disambiguate. */
   clarification?: ClarificationRequest | null
 }

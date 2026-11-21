@@ -37,9 +37,9 @@ export function Navbar() {
       <nav className="mx-auto flex max-w-[1440px] items-center justify-between gap-6 px-5 py-4 md:px-10">
         <Wordmark to="/" size="md" />
         <div className="hidden items-center gap-7 md:flex">
-          {NAV_LINKS.map((link) => <a key={link.label} href={link.href} className="font-mono text-[11px] uppercase tracking-[0.14em] text-paper-label transition-colors hover:text-foam">{link.label}</a>)}
+          {NAV_LINKS.map((link) => <a key={link.label} href={link.href} className="font-mono text-[12px] uppercase tracking-[0.14em] text-paper-label transition-colors hover:text-foam">{link.label}</a>)}
         </div>
-        <button type="button" onClick={openProteus} className="hidden items-center gap-2 rounded-pill border border-hairline px-4 py-2 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors hover:border-paper-label hover:bg-paper/5 md:inline-flex">Open Proteus <ArrowUpRight className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={openProteus} className="hidden items-center gap-2 rounded-pill border border-hairline px-4 py-2 font-mono text-[12px] uppercase tracking-[0.12em] transition-colors hover:border-paper-label hover:bg-paper/5 md:inline-flex">Open Proteus <ArrowUpRight className="h-3.5 w-3.5" /></button>
         <button type="button" aria-label={open ? 'Close menu' : 'Open menu'} onClick={() => setOpen((value) => !value)} className="inline-flex h-9 w-9 items-center justify-center rounded-pill border border-hairline text-paper md:hidden">{open ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}</button>
       </nav>
       {open ? (
@@ -50,7 +50,7 @@ export function Navbar() {
           <button type="button" onClick={() => { setOpen(false); void openProteus() }} className="mt-auto rounded-pill bg-paper px-5 py-4 text-center font-mono text-sm uppercase tracking-[0.14em] text-ink">Open Proteus</button>
         </div>
       ) : null}
-      {authError ? <p role="alert" className="border-b border-ember/40 bg-ink/20 px-5 py-2 text-center text-[11px] text-paper-muted">{authError}</p> : null}
+      {authError ? <p role="alert" className="border-b border-ember/40 bg-ink/20 px-5 py-2 text-center text-[12px] text-paper-muted">{authError}</p> : null}
       <EmailSignInModal
         isOpen={emailSignInOpen}
         onClose={() => setEmailSignInOpen(false)}

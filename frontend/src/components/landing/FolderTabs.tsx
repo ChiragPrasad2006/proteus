@@ -132,7 +132,7 @@ export function FolderTabs() {
   return (
     <section id="product" className="relative mx-auto max-w-7xl px-6 py-24 lg:px-10 lg:py-32">
       <div className="mb-14 max-w-2xl">
-        <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.24em] text-accent">
+        <p className="mb-4 font-mono text-[12px] uppercase tracking-[0.24em] text-accent">
           Onboarding
         </p>
         <h2 className="font-display text-4xl font-light leading-tight tracking-tight text-fg text-balance sm:text-5xl">
@@ -163,7 +163,7 @@ export function FolderTabs() {
               style={{ transform: `rotate(${tab.rotate}deg)` }}
               className={cn(
                 'group relative -mb-px rounded-t-[16px] border border-b-0 px-5 py-3 transition-all duration-300 ease-proteus',
-                'font-mono text-[11px] uppercase tracking-[0.18em]',
+                'font-mono text-[12px] uppercase tracking-[0.18em]',
                 isActive
                   ? 'z-20 border-hairline bg-surface text-fg'
                   : 'z-10 translate-y-[3px] border-hairline bg-elevated/45 text-fg-faint hover:bg-elevated hover:text-fg-muted',
@@ -179,7 +179,7 @@ export function FolderTabs() {
       </div>
 
       {/* Panel */}
-      <div className="relative rounded-card rounded-tl-none border border-hairline bg-surface p-6 shadow-[0_40px_90px_-60px_rgba(0,0,0,0.9)] sm:p-9">
+      <div className="relative rounded-card rounded-tl-none border border-hairline bg-surface p-6 sm:p-9">
         {/* ── 01 Connect ─────────────────────────────────────────── */}
         {active === 'connect' ? (
           <div role="tabpanel" id="panel-connect" aria-labelledby="tab-connect" className="animate-fade-up">
@@ -194,7 +194,7 @@ export function FolderTabs() {
                 <Lock className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
                 <p className="max-w-xl text-[13px] leading-relaxed text-fg-muted">
                   Extraction runs locally and writes to{' '}
-                  <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[11px] text-fg">
+                  <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-fg">
                     local_user_data/
                   </code>
                   . Raw bodies are cleaned of reply history before profiling — passwords are
@@ -223,13 +223,13 @@ export function FolderTabs() {
             </div>
 
             {seed.data ? (
-              <p className="mt-3 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] text-accent">
+              <p className="mt-3 inline-flex items-center gap-2 font-mono text-[12px] uppercase tracking-[0.14em] text-accent">
                 <Check className="h-3.5 w-3.5" />
                 {seed.data.clean_emails_retained} clean emails retained from {seed.data.extracted_emails}
               </p>
             ) : null}
             {seed.isError ? (
-              <p className="mt-3 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] text-[#fbbf24]">
+              <p className="mt-3 inline-flex items-center gap-2 font-mono text-[12px] uppercase tracking-[0.14em] text-[#fbbf24]">
                 <AlertTriangle className="h-3.5 w-3.5" />
                 Backend offline — start it on 127.0.0.1:8000 to run live extraction.
               </p>
@@ -242,7 +242,7 @@ export function FolderTabs() {
           <div role="tabpanel" id="panel-voice" aria-labelledby="tab-voice" className="animate-fade-up">
             <div className="grid gap-8 lg:grid-cols-12">
               <div className="lg:col-span-7">
-                <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.2em] text-fg-faint">
+                <p className="mb-4 font-mono text-[12px] uppercase tracking-[0.2em] text-fg-faint">
                   Deterministic metrics · all 412 emails
                 </p>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -252,7 +252,7 @@ export function FolderTabs() {
                       className="rounded-[18px] border border-hairline bg-elevated/40 p-4 transition-colors duration-300 ease-proteus hover:border-hairline-strong"
                     >
                       <p className="font-display text-3xl leading-none text-fg">{m.value}</p>
-                      <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-fg-faint">
+                      <p className="mt-2 font-mono text-[12px] uppercase tracking-[0.14em] text-fg-faint">
                         {m.unit}
                       </p>
                       <p className="mt-1 text-[12px] text-fg-muted">{m.label}</p>
@@ -260,7 +260,7 @@ export function FolderTabs() {
                   ))}
                 </div>
 
-                <p className="mb-3 mt-8 font-mono text-[11px] uppercase tracking-[0.2em] text-fg-faint">
+                <p className="mb-3 mt-8 font-mono text-[12px] uppercase tracking-[0.2em] text-fg-faint">
                   LLM style card · Qwen3:8B
                 </p>
                 <div className="flex flex-wrap gap-2">
@@ -273,7 +273,7 @@ export function FolderTabs() {
               </div>
 
               <div className="lg:col-span-5">
-                <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.2em] text-fg-faint">
+                <p className="mb-4 font-mono text-[12px] uppercase tracking-[0.2em] text-fg-faint">
                   Top greetings
                 </p>
                 <div className="space-y-3">
@@ -281,7 +281,7 @@ export function FolderTabs() {
                     <div key={g.pattern}>
                       <div className="mb-1.5 flex items-baseline justify-between">
                         <span className="font-mono text-[12px] text-fg">{g.pattern}</span>
-                        <span className="font-mono text-[11px] text-fg-faint">{g.pct}%</span>
+                        <span className="font-mono text-[12px] text-fg-faint">{g.pct}%</span>
                       </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
                         <div
@@ -295,7 +295,7 @@ export function FolderTabs() {
 
                 <div className="mt-6 rounded-[18px] border border-accent/25 bg-accent/[0.06] p-5">
                   <Quote className="mb-3 h-4 w-4 text-accent" />
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-fg-faint">
+                  <p className="font-mono text-[12px] uppercase tracking-[0.16em] text-fg-faint">
                     Exact sign-off
                   </p>
                   <p className="mt-2 whitespace-pre-line font-display text-xl italic leading-snug text-fg">
@@ -312,7 +312,7 @@ export function FolderTabs() {
           <div role="tabpanel" id="panel-safety" aria-labelledby="tab-safety" className="animate-fade-up">
             <div className="grid gap-8 lg:grid-cols-12">
               <div className="lg:col-span-5">
-                <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.2em] text-fg-faint">
+                <p className="mb-4 font-mono text-[12px] uppercase tracking-[0.2em] text-fg-faint">
                   Relationship tiers
                 </p>
                 <div className="space-y-3">
@@ -335,7 +335,7 @@ export function FolderTabs() {
                             strokeDasharray={`${(t.pct / 100) * 94.2} 94.2`}
                           />
                         </svg>
-                        <span className="absolute inset-0 flex items-center justify-center font-mono text-[9px] text-fg-muted">
+                        <span className="absolute inset-0 flex items-center justify-center font-mono text-[12px] text-fg-muted">
                           {t.pct}
                         </span>
                       </div>
@@ -349,7 +349,7 @@ export function FolderTabs() {
               </div>
 
               <div className="lg:col-span-4">
-                <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.2em] text-fg-faint">
+                <p className="mb-4 font-mono text-[12px] uppercase tracking-[0.2em] text-fg-faint">
                   Audience modes
                 </p>
                 <div className="space-y-3">
@@ -372,7 +372,7 @@ export function FolderTabs() {
               </div>
 
               <div className="lg:col-span-3">
-                <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.2em] text-fg-faint">
+                <p className="mb-4 font-mono text-[12px] uppercase tracking-[0.2em] text-fg-faint">
                   Hard safety rules
                 </p>
                 <div className="space-y-4 rounded-[18px] border border-hairline bg-elevated/40 p-5">
@@ -406,7 +406,7 @@ export function FolderTabs() {
                   />
                   <div className="flex items-start gap-2 border-t border-hairline pt-4">
                     <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" />
-                    <p className="text-[11px] leading-relaxed text-fg-faint">
+                    <p className="text-[12px] leading-relaxed text-fg-faint">
                       Rules are enforced server-side, not just in the UI.
                     </p>
                   </div>
