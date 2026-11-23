@@ -32,7 +32,33 @@ class QwenDrafter:
 
 Write plain-text human emails ONLY. Never use Markdown formatting (**bold**, *italics*, ### headings, code blocks).
 
+Write flowing, conversational paragraphs the way a person would actually type the email. NEVER write report, ticket, or memo headings and NEVER write field labels such as "Project Deadline", "Severity Score", "SLA allowed hours", "Request", "Confirmation", "Outstanding Issues", "Action Items", "Summary", "Priority", "Status" or "Next Steps". Put that information into ordinary sentences instead.
+
 Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NEVER copy facts, metrics, severity scores, SLA hours, or unrelated details from reference emails or templates."""
+
+    #: Report/ticket labels that must never survive as headings in a drafted email.
+    REPORT_HEADING_LABELS = {
+        "project deadline", "deadline", "severity score", "severity", "sla allowed hours",
+        "sla", "outstanding issues", "outstanding issue", "action items", "action item",
+        "next steps", "impact", "resolution", "category", "priority", "timeline",
+        "assigned to", "reported by", "reference id", "ticket id", "issue date",
+        "request", "confirmation", "summary", "status", "subject", "re",
+    }
+
+    #: Labels whose value reads better as a plain sentence than as "The X is Y".
+    REPORT_HEADING_VALUE_ONLY_LABELS = {
+        "request", "confirmation", "summary", "status", "subject", "re", "issue date",
+    }
+
+    #: Labels whose *standalone* form is a report artefact and is dropped.
+    #: Ambiguous words (subject, status, summary, request, …) are only rewritten
+    #: when they carry a value, so plain headings keep their text.
+    REPORT_HEADING_DROP_IF_BARE = {
+        "project deadline", "deadline", "severity score", "severity", "sla allowed hours",
+        "sla", "outstanding issues", "outstanding issue", "action items", "action item",
+        "next steps", "impact", "resolution", "category", "priority", "timeline",
+        "assigned to", "reported by", "reference id", "ticket id",
+    }
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -272,8 +298,57 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
 
         return cleaned.strip()
 
+    def _strip_report_headings(self, draft: str) -> str:
+        """Rewrite report/ticket label lines as plain conversational sentences.
+
+        ``Project Deadline: Monday`` becomes ``The project deadline is Monday.`` and a
+        bare ``Request``/``Outstanding Issues`` heading is dropped; ordinary prose is
+        left untouched.
+        """
+        lines = draft.split("\n")
+        rewritten: list[str] = []
+        for index, raw_line in enumerate(lines):
+            stripped = raw_line.strip()
+            if not stripped:
+                rewritten.append(raw_line)
+                continue
+            candidate = re.sub(r"^(?:[-*•]|\d+[.)])\s*", "", stripped).strip()
+            candidate = candidate.replace("**", "").strip()
+            if not candidate:
+                rewritten.append(raw_line)
+                continue
+            match = re.match(r"^(?P<label>[A-Za-z][A-Za-z0-9 /&]{1,40}?)\s*:\s*(?P<value>.+)$", candidate)
+            if match:
+                label = match.group("label").strip().lower()
+                value = match.group("value").strip()
+                if label in self.REPORT_HEADING_LABELS:
+                    if not value:
+                        continue  # label-only heading -> drop it
+                    if label in self.REPORT_HEADING_VALUE_ONLY_LABELS:
+                        sentence = value if value.endswith((".", "!", "?")) else f"{value}."
+                    else:
+                        sentence = f"The {label} is {value}"
+                        sentence = sentence if sentence.endswith((".", "!", "?")) else f"{sentence}."
+                    rewritten.append(sentence[0].upper() + sentence[1:])
+                    continue
+            bare = candidate.lower().rstrip(":")
+            if len(candidate) <= 40 and bare in self.REPORT_HEADING_DROP_IF_BARE:
+                continue  # standalone report heading -> drop it
+            # An ambiguous label ("Request", "Summary", …) is only a heading when it
+            # introduces a list; "Subject" over prose stays as prose.
+            if len(candidate) <= 40 and bare in self.REPORT_HEADING_VALUE_ONLY_LABELS:
+                following = ""
+                for lookahead in lines[index + 1:]:
+                    if lookahead.strip():
+                        following = lookahead.strip()
+                        break
+                if following.startswith(("-", "*", "•")) or re.match(r"^\d+[.)]\s", following):
+                    continue  # label introducing a list -> drop it
+            rewritten.append(raw_line)
+        return "\n".join(rewritten)
+
     def _post_process_draft(self, draft: str, profile: UserStyleProfile) -> str:
-        """Clean up the draft: strip placeholders, markdown, leading Subject:, and deduplicate sign-off."""
+        """Clean up the draft: strip placeholders, markdown, leading Subject:, report headings, and deduplicate sign-off."""
         # Remove special tokens
         draft = re.sub(r"<\|im_end\|>", "", draft)
         draft = re.sub(r"<\|im_start\|>", "", draft)
@@ -304,6 +379,9 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
         ]
         for ph in placeholders:
             draft = re.sub(ph, "", draft, flags=re.IGNORECASE)
+
+        # Report/ticket headings must not survive as headings in a human email.
+        draft = self._strip_report_headings(draft)
 
         # Deduplicate sign-off
         exact_signoff = profile.deterministic_stylometry.exact_signoff
@@ -449,6 +527,8 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
             "Preserve facts, commitments, dates, recipients, and audience topology. Do not add boilerplate, "
             "SLA/severity blocks, new claims, or unrelated content. Return only JSON with string keys subject and body.\n\n"
             "Write plain-text human emails ONLY. Never use Markdown formatting (**bold**, *italics*, ### headings, code blocks).\n\n"
+            "Write flowing, conversational paragraphs. Never write report/ticket headings or field labels such as "
+            '"Project Deadline", "Severity Score", "SLA allowed hours", "Request", "Confirmation" or "Outstanding Issues".\n\n'
             f"USER STYLE PROFILE:\n{self._format_style_profile(profile)}"
         )
         user_prompt = (

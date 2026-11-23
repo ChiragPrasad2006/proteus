@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { IconButton } from '@/components/ui/IconButton'
 import { api } from '@/lib/api'
-import { clearRuleOverrides, getForgottenRules, getRuleOverrides, forgetRule, setRuleOverride } from '@/lib/localAdapter'
+import { forgetRule, listRecipientRules, resetProfile, updateRule, type RecipientRule } from '@/lib/localAdapter'
 import { cn } from '@/lib/utils'
 import { useActiveAccount, useAppStore } from '@/stores/useAppStore'
 import { toast } from '@/stores/useToastStore'
@@ -15,6 +15,13 @@ const AUDIENCE_TABS: { mode: AudienceMode; label: string; copy: string }[] = [
   { mode: 'group_cc', label: 'Group CC', copy: 'A shared audience. Proteus writes for the whole group: inclusive greetings, neutral asides, and nothing that assumes a private context between you and one reader.' },
   { mode: 'broadcast_bcc', label: 'Broadcast BCC', copy: 'Hidden recipients. Proteus keeps the tone impersonal and uniform — no single person is addressed, and the letter reads the same for everyone who receives it.' },
 ]
+
+interface RuleRow {
+  rule_id: string
+  text: string
+  scope: 'global' | 'recipient'
+  recipient_email?: string
+}
 
 /** Paper slide-over sheet with the real stylometry fingerprint and learned rules. */
 export function StyleProfile() {
@@ -28,21 +35,19 @@ export function StyleProfile() {
   const [tab, setTab] = useState<AudienceMode>('1on1_private')
   const [building, setBuilding] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
-  const [forgotten, setForgotten] = useState<string[]>([])
-  const [overrides, setOverrides] = useState<Record<string, string>>({})
+  const [resetting, setResetting] = useState(false)
+  const [recipientRules, setRecipientRules] = useState<RecipientRule[]>([])
+  const [rulesLoading, setRulesLoading] = useState(false)
+  // Render-phase adjustment: reload per-recipient rules whenever the drawer opens.
+  const [rulesAccount, setRulesAccount] = useState<string | null>(null)
+  const rulesKey = open && accountId ? accountId : null
+  if (rulesKey !== rulesAccount) {
+    setRulesAccount(rulesKey)
+    setRecipientRules([])
+    setRulesLoading(true)
+  }
   const [editingRule, setEditingRule] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
-
-  // Load local rule overrides when the drawer opens (render-phase adjustment).
-  const [loadedFor, setLoadedFor] = useState<string | null>(null)
-  const loadKey = open && accountId ? accountId : null
-  if (loadKey !== loadedFor) {
-    setLoadedFor(loadKey)
-    if (loadKey !== null) {
-      setForgotten(getForgottenRules(loadKey))
-      setOverrides(getRuleOverrides(loadKey))
-    }
-  }
 
   useEffect(() => {
     if (!open) return
@@ -51,9 +56,29 @@ export function StyleProfile() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [open, setOpen])
 
+  // Per-recipient rules are server state: fetch them once per drawer open.
+  useEffect(() => {
+    if (!rulesAccount) return
+    let cancelled = false
+    listRecipientRules(rulesAccount)
+      .then((rules) => { if (!cancelled) setRecipientRules(rules) })
+      .catch(() => { if (!cancelled) setRecipientRules([]) })
+      .finally(() => { if (!cancelled) setRulesLoading(false) })
+    return () => { cancelled = true }
+  }, [rulesAccount])
+
   if (!open) return null
 
   const close = () => setOpen(false)
+
+  const refreshProfile = async () => {
+    if (!accountId) return
+    try {
+      setStyleProfile(await api.profile(accountId))
+    } catch {
+      setStyleProfile(null)
+    }
+  }
 
   const buildProfile = async () => {
     if (!accountId || building) return
@@ -81,21 +106,116 @@ export function StyleProfile() {
     toast('Profile exported as JSON.')
   }
 
-  const confirmReset = () => {
-    // TODO(backend): POST /api/profile/reset — server-side reset is not exposed yet.
-    // Until then, reset clears local rule overrides/forgets and re-reads the server profile.
-    if (accountId) {
-      clearRuleOverrides(accountId)
-      setForgotten([])
-      setOverrides({})
-      void api.profile(accountId).then(setStyleProfile).catch(() => setStyleProfile(null))
+  const saveEdit = async (row: RuleRow) => {
+    const text = editText.trim()
+    if (!accountId || !text) return
+    try {
+      await updateRule(accountId, row.rule_id, text, row.scope)
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not edit the rule.', 'warning', 6000)
+      return
     }
-    setResetOpen(false)
-    toast('Local rule overrides cleared. Server-side reset arrives with the profile-reset endpoint.')
+    setEditingRule(null)
+    await Promise.all([refreshProfile(), reloadRecipientRules()])
+    toast('Rule updated.')
   }
 
-  const rules = profile?.global_learned_rules ?? []
-  const visibleRules = rules.filter((rule) => !forgotten.includes(rule))
+  const forget = async (row: RuleRow) => {
+    if (!accountId) return
+    try {
+      await forgetRule(accountId, row.rule_id, row.scope)
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not forget the rule.', 'warning', 6000)
+      return
+    }
+    await Promise.all([refreshProfile(), reloadRecipientRules()])
+    toast('Rule forgotten.')
+  }
+
+  const reloadRecipientRules = async () => {
+    if (!accountId) return
+    try {
+      setRecipientRules(await listRecipientRules(accountId))
+    } catch {
+      setRecipientRules([])
+    }
+  }
+
+  const confirmReset = async () => {
+    if (!accountId || resetting) return
+    setResetting(true)
+    try {
+      setStyleProfile(await resetProfile(accountId))
+      await reloadRecipientRules()
+      toast('Style profile reset.', 'success')
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not reset the profile.', 'warning', 6000)
+    } finally {
+      setResetting(false)
+      setResetOpen(false)
+    }
+  }
+
+  const globalRules: RuleRow[] = (profile?.global_learned_rules ?? []).map((text, index) => ({
+    rule_id: `global:${index}`,
+    text,
+    scope: 'global',
+  }))
+  const recipientRuleRows: RuleRow[] = recipientRules.map((rule) => ({
+    rule_id: rule.rule_id,
+    text: rule.text,
+    scope: 'recipient',
+    recipient_email: rule.recipient_email,
+  }))
+
+  const renderRule = (row: RuleRow) => {
+    const isEditing = editingRule === row.rule_id
+    return (
+      <li key={row.rule_id} className="rounded-card border border-ink-hairline bg-white/30 p-3">
+        {isEditing ? (
+          <div className="flex items-center gap-2">
+            <input
+              value={editText}
+              onChange={(event) => setEditText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void saveEdit(row)
+                if (event.key === 'Escape') setEditingRule(null)
+              }}
+              aria-label="Edit rule"
+              className="min-w-0 flex-1 rounded-card border border-ink-hairline bg-paper px-2.5 py-1.5 text-[13px] focus:border-ink/60 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void saveEdit(row)}
+              className="shrink-0 rounded-pill bg-ink px-3 py-1.5 text-[12px] font-medium text-paper hover:bg-send-hover"
+            >
+              Save
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-start justify-between gap-3">
+            <p className="min-w-0 text-[13px] leading-relaxed">
+              “{row.text}”
+              {row.recipient_email ? <span className="ml-1.5 font-mono text-[12px] text-ink-faint">{row.recipient_email}</span> : null}
+            </p>
+            <div className="flex shrink-0 items-center gap-1">
+              <IconButton label="Edit rule" surface="paper" className="h-7 w-7" onClick={() => { setEditingRule(row.rule_id); setEditText(row.text) }}>
+                <Pencil className="h-3 w-3" />
+              </IconButton>
+              <button
+                type="button"
+                onClick={() => void forget(row)}
+                className="rounded-pill border border-ink-hairline px-2.5 py-1 text-[12px] text-ink-muted hover:border-ink/50 hover:text-ink"
+              >
+                Forget
+              </button>
+            </div>
+          </div>
+        )}
+      </li>
+    )
+  }
+
   const stylometry = profile?.deterministic_stylometry
   const styleCard = profile?.global_style_card
   const topGreeting = stylometry?.top_greetings?.[0]
@@ -161,82 +281,29 @@ export function StyleProfile() {
                 </div>
               ) : null}
               <p className="mt-3 font-mono text-[12px] text-ink-muted">
-                {profile.corpus_statistics.total_sent_emails} sent emails · {profile.corpus_statistics.clean_emails_retained} retained · {rules.length} learned rules
+                {profile.corpus_statistics.total_sent_emails} sent emails · {profile.corpus_statistics.clean_emails_retained} retained · {globalRules.length} global rules
               </p>
             </section>
 
             {/* Learned rules */}
             <section>
-              <h3 className="font-mono text-[12px] uppercase tracking-[0.14em] text-ink-muted">Learned rules</h3>
-              {visibleRules.length === 0 ? (
-                <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">No active rules yet. Proteus learns atomic rules from the edits you make before sending.</p>
+              <h3 className="font-mono text-[12px] uppercase tracking-[0.14em] text-ink-muted">Global rules</h3>
+              {globalRules.length === 0 ? (
+                <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">No global rules yet. Proteus learns atomic rules from the edits you make before sending.</p>
               ) : (
-                <ul className="mt-2.5 space-y-2">
-                  {visibleRules.map((rule) => {
-                    const displayed = overrides[rule] ?? rule
-                    const isEditing = editingRule === rule
-                    return (
-                      <li key={rule} className="rounded-card border border-ink-hairline bg-white/30 p-3">
-                        {isEditing ? (
-                          <div className="flex items-center gap-2">
-                            <input
-                              value={editText}
-                              onChange={(event) => setEditText(event.target.value)}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter' && accountId) {
-                                  // TODO(backend): PATCH /api/profile/rules/{rule_id} — edits are local overrides until then.
-                                  setRuleOverride(accountId, rule, editText.trim() || rule)
-                                  setOverrides(getRuleOverrides(accountId))
-                                  setEditingRule(null)
-                                }
-                                if (event.key === 'Escape') setEditingRule(null)
-                              }}
-                              aria-label="Edit rule"
-                              className="min-w-0 flex-1 rounded-card border border-ink-hairline bg-paper px-2.5 py-1.5 text-[13px] focus:border-ink/60 focus:outline-none"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!accountId) return
-                                setRuleOverride(accountId, rule, editText.trim() || rule)
-                                setOverrides(getRuleOverrides(accountId))
-                                setEditingRule(null)
-                              }}
-                              className="shrink-0 rounded-pill bg-ink px-3 py-1.5 text-[12px] font-medium text-paper hover:bg-send-hover"
-                            >
-                              Save
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-start justify-between gap-3">
-                            <p className="text-[13px] leading-relaxed">“{displayed}”{overrides[rule] ? <span className="ml-1.5 font-mono text-[12px] text-ink-faint">(edited locally)</span> : null}</p>
-                            <div className="flex shrink-0 items-center gap-1">
-                              <IconButton label="Edit rule" surface="paper" className="h-7 w-7" onClick={() => { setEditingRule(rule); setEditText(displayed) }}>
-                                <Pencil className="h-3 w-3" />
-                              </IconButton>
-                              {/* TODO(backend): DELETE /api/profile/rules/{rule_id} — forget hides locally until then. */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (!accountId) return
-                                  forgetRule(accountId, rule)
-                                  setForgotten(getForgottenRules(accountId))
-                                  toast('Rule hidden on this device.')
-                                }}
-                                className="rounded-pill border border-ink-hairline px-2.5 py-1 text-[12px] text-ink-muted hover:border-ink/50 hover:text-ink"
-                              >
-                                Forget
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </li>
-                    )
-                  })}
-                </ul>
+                <ul className="mt-2.5 space-y-2">{globalRules.map(renderRule)}</ul>
               )}
-              {/* TODO(backend): GET /api/profile/recipient-rules — per-recipient rules are not exposed by the API yet. */}
-              <p className="mt-2.5 text-[12px] leading-relaxed text-ink-faint">Per-recipient rules will appear here once the local API exposes them.</p>
+            </section>
+
+            <section>
+              <h3 className="font-mono text-[12px] uppercase tracking-[0.14em] text-ink-muted">Per-recipient rules</h3>
+              {rulesLoading ? (
+                <p className="mt-2 text-[13px] text-ink-muted">Loading…</p>
+              ) : recipientRuleRows.length === 0 ? (
+                <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">No recipient-specific rules yet. They appear after Proteus learns an edit pattern for a particular person.</p>
+              ) : (
+                <ul className="mt-2.5 space-y-2">{recipientRuleRows.map(renderRule)}</ul>
+              )}
             </section>
 
             {/* Audience tabs */}
@@ -276,11 +343,14 @@ export function StyleProfile() {
         <div className="p-6">
           <h2 className="font-display text-2xl">Reset profile?</h2>
           <p className="mt-3 text-[13px] leading-relaxed text-ink-muted">
-            This clears your local rule edits and hidden rules, then re-reads the profile from the server. A full server-side reset is not available yet.
+            This forgets every learned rule and restores the stylometry derived from your sent mail. Your mailbox connection, contacts and Sent corpus stay untouched.
           </p>
           <div className="mt-6 flex items-center justify-end gap-2.5">
             <button type="button" onClick={() => setResetOpen(false)} className="rounded-pill border border-ink-hairline px-4 py-2 text-[13px] font-medium text-ink hover:border-ink/50 hover:bg-ink/5">Cancel</button>
-            <button type="button" onClick={confirmReset} className="rounded-pill bg-ink px-5 py-2 text-[13px] font-medium text-paper hover:bg-send-hover">Reset local overrides</button>
+            <button type="button" onClick={() => void confirmReset()} disabled={resetting} className="inline-flex items-center gap-2 rounded-pill bg-ink px-5 py-2 text-[13px] font-medium text-paper hover:bg-send-hover disabled:opacity-50">
+              {resetting ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden /> : null}
+              {resetting ? 'Resetting…' : 'Reset profile'}
+            </button>
           </div>
         </div>
       </Modal>

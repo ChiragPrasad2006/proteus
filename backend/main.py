@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import unquote
 
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
@@ -54,8 +55,11 @@ from backend.schemas import (
     DispatchResponse,
     DraftRequest,
     DraftResponse,
+    DraftDeleteResponse,
     DraftTweakRequest,
     DraftTweakResponse,
+    DraftUpdateRequest,
+    DraftUpdateResponse,
     GoogleAuthStartResponse,
     GoogleOAuthCredentialsStatus,
     GoogleOAuthCredentialsUpload,
@@ -65,6 +69,10 @@ from backend.schemas import (
     OnboardingRequest,
     OnboardingStatus,
     OutboundEmailRequest,
+    ProfileRecipientRulesResponse,
+    ProfileRuleForgetResponse,
+    ProfileRuleResponse,
+    ProfileRuleUpdateRequest,
     RawSentEmail,
     ReindexRequest,
     ReindexResponse,
@@ -72,6 +80,7 @@ from backend.schemas import (
     RetrieveResponse,
     RetrievedExample,
     SendReceipt,
+    SessionPinRequest,
     UserStyleProfile,
 )
 from backend.storage import (
@@ -624,6 +633,40 @@ def _run_post_connect_pipeline(
         pass
 
 
+def _resolve_rule_id(
+    store: ProfileStore, rule_id: str, scope: str | None
+) -> tuple[str, str | None, int]:
+    """Resolve a learned-rule id into ``(scope, recipient_email, index)``.
+
+    Supported identifiers are the deterministic ``global:<index>`` and
+    ``recipient:<email>:<index>`` forms. As a convenience the exact text of a
+    global rule is also accepted.
+    """
+    raw = unquote(rule_id or "").strip()
+    if scope == "recipient" and not raw.startswith("recipient:"):
+        return "recipient", raw.lower(), 0
+    if raw.startswith("global:"):
+        try:
+            return "global", None, int(raw.split(":", 1)[1])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Malformed global rule id.") from exc
+    if raw.startswith("recipient:"):
+        remainder = raw[len("recipient:"):]
+        email, separator, index = remainder.rpartition(":")
+        if not separator:
+            raise HTTPException(status_code=400, detail="Malformed recipient rule id.")
+        try:
+            return "recipient", email.lower(), int(index)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Malformed recipient rule id.") from exc
+    profile = store.load_profile()
+    if profile is not None:
+        for index, text in enumerate(profile.global_learned_rules):
+            if text == raw:
+                return "global", None, index
+    raise HTTPException(status_code=404, detail="Learned rule not found for this account.")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Create an application instance suitable for production or isolated tests."""
     runtime_settings = settings or Settings()
@@ -1154,6 +1197,97 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="No profile has been built yet.")
         return profile
 
+    @app.get("/api/profile/recipient-rules", response_model=ProfileRecipientRulesResponse)
+    def list_recipient_rules(
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> ProfileRecipientRulesResponse:
+        """Return every per-recipient learned rule of the active account."""
+        _, acc_settings = ctx
+        store = ProfileStore(acc_settings)
+        rules: list[dict[str, str]] = []
+        for profile in store.list_recipient_profiles():
+            for index, text in enumerate(profile.learned_rules_json):
+                if not text:
+                    continue
+                rules.append(
+                    {
+                        "rule_id": ProfileStore.recipient_rule_id(profile.recipient_email, index),
+                        "recipient_email": profile.recipient_email,
+                        "text": text,
+                    }
+                )
+        return ProfileRecipientRulesResponse(rules=rules)
+
+    @app.patch("/api/profile/rules/{rule_id}", response_model=ProfileRuleResponse)
+    def update_profile_rule(
+        rule_id: str,
+        rule_data: ProfileRuleUpdateRequest,
+        scope: str | None = None,
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> ProfileRuleResponse:
+        """Edit a learned rule (global or recipient scoped) for the active account."""
+        _, acc_settings = ctx
+        store = ProfileStore(acc_settings)
+        resolved_scope, recipient_email, index = _resolve_rule_id(store, rule_id, scope)
+        text = rule_data.text.strip()
+        if not text:
+            raise HTTPException(status_code=422, detail="Rule text cannot be empty.")
+        if resolved_scope == "recipient":
+            if recipient_email is None:
+                raise HTTPException(status_code=400, detail="Recipient scope requires an email address.")
+            updated = store.update_recipient_rule(recipient_email, index, text)
+        else:
+            updated = store.update_global_rule(index, text)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Learned rule not found for this account.")
+        return ProfileRuleResponse(rule_id=rule_id, text=text)
+
+    @app.delete("/api/profile/rules/{rule_id}", response_model=ProfileRuleForgetResponse)
+    def forget_profile_rule(
+        rule_id: str,
+        scope: str | None = None,
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> ProfileRuleForgetResponse:
+        """Forget a learned rule (global or recipient scoped) for the active account."""
+        _, acc_settings = ctx
+        store = ProfileStore(acc_settings)
+        resolved_scope, recipient_email, index = _resolve_rule_id(store, rule_id, scope)
+        if resolved_scope == "recipient":
+            if recipient_email is None:
+                raise HTTPException(status_code=400, detail="Recipient scope requires an email address.")
+            removed = store.delete_recipient_rule(recipient_email, index)
+        else:
+            removed = store.delete_global_rule(index)
+        if not removed:
+            raise HTTPException(status_code=404, detail="Learned rule not found for this account.")
+        return ProfileRuleForgetResponse(forgotten=True, rule_id=rule_id)
+
+    @app.post("/api/profile/reset", response_model=UserStyleProfile)
+    def reset_profile(
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> UserStyleProfile:
+        """Forget learned rules and restore corpus-derived stylometry for this account.
+
+        Credentials, OAuth tokens, contacts and the cleaned corpus are preserved.
+        """
+        _, acc_settings = ctx
+        store = ProfileStore(acc_settings)
+        profile = store.load_profile()
+        if profile is None:
+            raise HTTPException(status_code=404, detail="No profile has been built yet.")
+        store.clear_learned_rules()
+        # Reload: the in-memory copy still carries the rules we just cleared.
+        profile = store.load_profile() or profile
+        cleaned = store.load_cleaned_emails()
+        if cleaned:
+            try:
+                profile.deterministic_stylometry = compute_stylometry(cleaned)
+            except Exception:
+                pass
+        # Corpus statistics describe the sent corpus, not the learned rules: keep them.
+        store.save_profile(profile)
+        return profile
+
     @app.get("/api/contacts")
     def list_contacts(ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx)) -> dict[str, Any]:
         """Return the active account's resolved contacts."""
@@ -1347,6 +1481,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         revised, _ = _revise_staged_draft(acc_settings, request)
         return DraftTweakResponse(**revised)
 
+    @app.patch("/api/draft/{draft_id}", response_model=DraftUpdateResponse)
+    def update_staged_draft(
+        draft_id: str,
+        request: DraftUpdateRequest,
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> DraftUpdateResponse:
+        """Persist edits to a staged draft so "Save draft" survives a reload."""
+        _, acc_settings = ctx
+        store = ProfileStore(acc_settings)
+        pending = store.load_pending_draft(draft_id)
+        if pending is None:
+            raise HTTPException(status_code=404, detail="Staged draft not found for this account.")
+        envelope = dict(pending.get("request") or {})
+        if request.to is not None:
+            envelope["to"] = request.to
+        if request.cc is not None:
+            envelope["cc"] = request.cc
+        if request.bcc is not None:
+            envelope["bcc"] = request.bcc
+        if request.subject is not None:
+            envelope["subject"] = request.subject
+        body = request.body if request.body is not None else pending.get("draft", "")
+        store.update_pending_draft(draft_id, envelope, body)
+        # Keep the chat draft card in sync so the session view matches the saved draft.
+        sessions = ChatSessionStore(acc_settings.chat_sessions_path)
+        card = sessions.update_draft_card_by_draft_id(
+            draft_id,
+            subject=str(envelope.get("subject") or ""),
+            body=body,
+            status="DRAFT",
+            to=list(envelope.get("to") or []),
+            cc=list(envelope.get("cc") or []),
+            bcc=list(envelope.get("bcc") or []),
+        )
+        updated_at = str((card or {}).get("updated_at") or datetime.now(timezone.utc).isoformat())
+        return DraftUpdateResponse(draft_id=draft_id, updated_at=updated_at)
+
+    @app.delete("/api/draft/{draft_id}", response_model=DraftDeleteResponse)
+    def discard_staged_draft(
+        draft_id: str,
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> DraftDeleteResponse:
+        """Discard a staged draft so "Discard" survives a reload."""
+        _, acc_settings = ctx
+        store = ProfileStore(acc_settings)
+        pending = store.load_pending_draft(draft_id)
+        if pending is None:
+            raise HTTPException(status_code=404, detail="Staged draft not found for this account.")
+        store.delete_pending_draft(draft_id)
+        sessions = ChatSessionStore(acc_settings.chat_sessions_path)
+        sessions.delete_draft_card_by_draft_id(draft_id)
+        return DraftDeleteResponse(deleted=True, draft_id=draft_id)
+
     # --- Tier 4: Autonomous dispatch endpoints ------------------------------
     @app.post("/api/email/dispatch", response_model=DispatchResponse)
     def dispatch_email(
@@ -1437,6 +1624,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Update title and mark as custom
         sessions.update_session_title(session_id, new_title, is_custom=True)
         updated = sessions.get_session_summary(session_id)
+        return ChatSessionSummary.model_validate(updated)
+
+    @app.patch("/api/chat/sessions/{session_id}/pin", response_model=ChatSessionSummary)
+    def pin_chat_session(
+        session_id: str,
+        pin_data: SessionPinRequest,
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> ChatSessionSummary:
+        """Pin or unpin a session for the active account (idempotent)."""
+        account, acc_settings = ctx
+        if account is None:
+            raise HTTPException(status_code=400, detail="X-Account-ID header is required.")
+        sessions = ChatSessionStore(acc_settings.chat_sessions_path)
+        summary = sessions.get_session_summary(session_id)
+        if summary is None or summary["account_id"] != account.account_id:
+            raise HTTPException(status_code=404, detail="Session not found for this account.")
+        sessions.set_session_pinned(session_id, pin_data.pinned)
+        updated = sessions.get_session_summary(session_id)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Session not found for this account.")
         return ChatSessionSummary.model_validate(updated)
 
     @app.delete("/api/chat/sessions/{session_id}")

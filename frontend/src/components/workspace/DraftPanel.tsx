@@ -7,7 +7,7 @@ import { DiffView } from '@/components/workspace/VersionDiff'
 import { IconButton } from '@/components/ui/IconButton'
 import { useCountdownSeconds } from '@/hooks/useCountdown'
 import { draftsForSession, useDraftState, useSelectedDraft } from '@/hooks/useDraftState'
-import { getForgottenRules, forgetRule } from '@/lib/localAdapter'
+import { forgetRuleByText } from '@/lib/localAdapter'
 import { audienceFor, draftWasEdited, friendlyName } from '@/lib/status'
 import { cn, isValidEmail } from '@/lib/utils'
 import { useAppStore } from '@/stores/useAppStore'
@@ -55,7 +55,7 @@ export function DraftPanel({ onClose }: DraftPanelProps) {
     setCompareOn(false)
     setVersionIndex(null)
     setCcBccOpen(Boolean(draft && (draft.cc.length > 0 || draft.bcc.length > 0)))
-    setForgotten(accountId ? getForgottenRules(accountId) : [])
+    setForgotten([])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftId])
 
@@ -314,13 +314,17 @@ export function DraftPanel({ onClose }: DraftPanelProps) {
                 {visibleRules.map((rule) => (
                   <li key={rule.id} className="flex items-start justify-between gap-3 text-[13px] leading-relaxed text-ink">
                     <span>“{rule.text}”</span>
-                    {/* TODO(backend): DELETE /api/profile/rules/{rule_id} — forget is local-only until then. */}
                     <button
                       type="button"
                       onClick={() => {
-                        if (accountId) forgetRule(accountId, rule.text)
-                        setForgotten((current) => [...current, rule.text])
-                        toast('Rule hidden on this device.')
+                        if (!accountId) return
+                        void forgetRuleByText(accountId, rule.text)
+                          .then((ok) => {
+                            if (!ok) { toast('That rule is no longer active.', 'warning'); return }
+                            setForgotten((current) => [...current, rule.text])
+                            toast('Rule forgotten.')
+                          })
+                          .catch(() => toast('Could not forget the rule.', 'warning'))
                       }}
                       className="shrink-0 rounded-pill border border-ink-hairline px-2.5 py-0.5 text-[12px] text-ink-muted hover:border-ink/50 hover:text-ink"
                     >

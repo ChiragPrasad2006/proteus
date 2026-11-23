@@ -188,6 +188,103 @@ class ProfileStore:
                 last_updated=datetime.fromisoformat(row[6]) if row[6] else datetime.now(timezone.utc),
             )
 
+    def list_recipient_profiles(self) -> list[RecipientProfile]:
+        """Return every recipient profile of the active account (alphabetical)."""
+        with sqlite3.connect(self.settings.sqlite_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT recipient_email, recipient_domain, relationship_tier, preferred_greeting,
+                       sent_count, learned_rules_json, last_updated
+                FROM recipient_profiles
+                ORDER BY recipient_email ASC
+                """
+            ).fetchall()
+        import json
+        return [
+            RecipientProfile(
+                recipient_email=row[0],
+                recipient_domain=row[1] or "",
+                relationship_tier=row[2] or "unknown",
+                preferred_greeting=row[3] or "",
+                sent_count=row[4] or 0,
+                learned_rules_json=json.loads(row[5]) if row[5] else [],
+                last_updated=datetime.fromisoformat(row[6]) if row[6] else datetime.now(timezone.utc),
+            )
+            for row in rows
+        ]
+
+    # --- learned rule mutation ---------------------------------------------
+    @staticmethod
+    def global_rule_id(index: int) -> str:
+        """Deterministic identifier for a global learned rule (index based)."""
+        return f"global:{index}"
+
+    @staticmethod
+    def recipient_rule_id(recipient_email: str, index: int) -> str:
+        """Deterministic identifier for a recipient-scoped learned rule."""
+        return f"recipient:{recipient_email.lower()}:{index}"
+
+    def update_global_rule(self, index: int, text: str) -> bool:
+        """Replace the text of a global learned rule. Returns True when it existed."""
+        profile = self.load_profile()
+        if profile is None:
+            return False
+        rules = list(profile.global_learned_rules)
+        if not 0 <= index < len(rules):
+            return False
+        rules[index] = text.strip()
+        profile.global_learned_rules = rules[:10]
+        self.save_profile(profile)
+        return True
+
+    def delete_global_rule(self, index: int) -> bool:
+        """Remove a global learned rule. Returns True when it existed."""
+        profile = self.load_profile()
+        if profile is None:
+            return False
+        rules = list(profile.global_learned_rules)
+        if not 0 <= index < len(rules):
+            return False
+        rules.pop(index)
+        profile.global_learned_rules = rules
+        self.save_profile(profile)
+        return True
+
+    def update_recipient_rule(self, recipient_email: str, index: int, text: str) -> bool:
+        """Replace the text of a recipient-scoped learned rule."""
+        profile = self.get_recipient_profile(recipient_email)
+        if profile is None:
+            return False
+        rules = list(profile.learned_rules_json)
+        if not 0 <= index < len(rules):
+            return False
+        rules[index] = text.strip()
+        profile.learned_rules_json = rules
+        self.upsert_recipient_profile(profile)
+        return True
+
+    def delete_recipient_rule(self, recipient_email: str, index: int) -> bool:
+        """Remove a recipient-scoped learned rule."""
+        profile = self.get_recipient_profile(recipient_email)
+        if profile is None:
+            return False
+        rules = list(profile.learned_rules_json)
+        if not 0 <= index < len(rules):
+            return False
+        rules.pop(index)
+        profile.learned_rules_json = rules
+        self.upsert_recipient_profile(profile)
+        return True
+
+    def clear_learned_rules(self) -> None:
+        """Forget every learned rule (global + per recipient) without touching the corpus."""
+        profile = self.load_profile()
+        if profile is not None:
+            profile.global_learned_rules = []
+            self.save_profile(profile)
+        with sqlite3.connect(self.settings.sqlite_path) as connection:
+            connection.execute("UPDATE recipient_profiles SET learned_rules_json = '[]'")
+
     def upsert_recipient_profile(self, profile: RecipientProfile) -> None:
         """Insert or update a recipient profile in SQLite."""
         import json

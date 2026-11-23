@@ -35,6 +35,8 @@ export interface Session {
   accountId: string
   /** True if the title was explicitly set by the user (prevents auto-overwrites). */
   isCustomTitle?: boolean
+  /** Server-side pin flag (per account). */
+  pinned?: boolean
 }
 
 export interface RecipientContact {

@@ -397,6 +397,53 @@ class ChatSessionSummary(StrictModel):
     message_count: int = 0
     pending_clarification: dict[str, Any] = {}
     is_custom_title: bool = False
+    pinned: bool = False
+
+
+class SessionPinRequest(StrictModel):
+    """Toggle the pinned flag of a chat session (per account)."""
+
+    pinned: bool = False
+
+
+class ProfileRuleUpdateRequest(StrictModel):
+    """Replace the text of a learned style rule."""
+
+    text: str = Field(min_length=1)
+
+
+class ProfileRuleResponse(StrictModel):
+    rule_id: str
+    text: str
+
+
+class ProfileRuleForgetResponse(StrictModel):
+    forgotten: bool = True
+    rule_id: str
+
+
+class ProfileRecipientRulesResponse(StrictModel):
+    rules: list[dict[str, str]] = Field(default_factory=list)
+
+
+class DraftUpdateRequest(StrictModel):
+    """Editable fields of a staged draft (Save draft)."""
+
+    to: list[str] | None = None
+    cc: list[str] | None = None
+    bcc: list[str] | None = None
+    subject: str | None = None
+    body: str | None = None
+
+
+class DraftUpdateResponse(StrictModel):
+    draft_id: str
+    updated_at: str
+
+
+class DraftDeleteResponse(StrictModel):
+    deleted: bool = True
+    draft_id: str
 
 
 class ChatSessionListResponse(StrictModel):

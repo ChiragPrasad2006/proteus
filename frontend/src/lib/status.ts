@@ -60,7 +60,7 @@ export function describeReviewReason(reviewReason: string | undefined, to: strin
   if (firstContact) parts.push(`Since it’s your first email to ${name}, I’m waiting for your OK before sending.`)
   if (noProfile) parts.push('Your style profile isn’t built yet, so I used a safe default voice.')
   if (modelIssue) parts.push('The local model was unavailable, so I wrote a simple template you can edit.')
-  if (parts.length === 0) parts.push(`I’ve drafted this to ${name}. Review it, and send when you’re happy.`)
+  if (parts.length === 0) parts.push('Review it, and send when you’re happy.')
   return parts.join(' ')
 }
 
@@ -77,9 +77,12 @@ export function humanizeDraftTurn(wireStatus: DraftStatus | string, draft: { to:
  * raw backend flags ("held it for review: … auto_send is False …").
  */
 export function cleanAssistantContent(content: string, to: string[]): string {
-  const heldIndex = content.indexOf('held it for review:')
+  // Older turns stored a duplicated "I've drafted this to X." prefix — collapse it.
+  const deduped = content.replace(/(I[’']ve drafted this to [^.]+)\.\s*\1\./i, '$1.')
+  if (deduped !== content) return deduped
+  const heldIndex = deduped.indexOf('held it for review:')
   if (heldIndex >= 0) {
-    const reasons = content.slice(heldIndex + 'held it for review:'.length).trim()
+    const reasons = deduped.slice(heldIndex + 'held it for review:'.length).trim()
     const names = to.map(friendlyName)
     const who = names.length === 0 ? 'your recipient' : names.join(', ')
     return `I’ve drafted this to ${who}. ${describeReviewReason(reasons, to)}`

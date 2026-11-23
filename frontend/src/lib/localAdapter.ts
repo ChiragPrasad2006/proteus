@@ -1,21 +1,169 @@
 /**
- * Small typed local adapter for sub-features the backend does not expose yet.
- * Everything here is namespaced per account_id (strict multi-account
- * isolation) and falls back gracefully when localStorage is unavailable.
+ * Typed adapter for the backend persistence endpoints. Every call is scoped to
+ * the active account through the ``X-Account-ID`` header, so no state can leak
+ * between accounts.
  *
- * TODO(backend) — endpoints needed to graduate these to server state:
- *   1. Session pinning:      PATCH /api/chat/sessions/{session_id}/pin
- *                            body { pinned: boolean } → ChatSessionSummary
- *   2. Forget learned rule:  DELETE /api/profile/rules/{rule_id}?scope=global|recipient
- *                            → { forgotten: true, rule_id }
- *   3. Edit learned rule:    PATCH /api/profile/rules/{rule_id}
- *                            body { text: string } → { rule_id, text }
- *   4. Per-recipient rules:  GET /api/profile/recipient-rules
- *                            → { rules: { recipient_email, rule_id, text }[] }
- *   5. Reset profile:        POST /api/profile/reset → UserStyleProfile
- *   6. Save draft edits:     PATCH /api/draft/{draft_id}
- *                            body { to, cc, bcc, subject, body } → { draft_id, updated_at }
+ * Server-backed (real endpoints):
+ *   PATCH  /api/chat/sessions/{session_id}/pin
+ *   GET    /api/profile/recipient-rules
+ *   PATCH  /api/profile/rules/{rule_id}
+ *   DELETE /api/profile/rules/{rule_id}
+ *   POST   /api/profile/reset
+ *   PATCH  /api/draft/{draft_id}
+ *   DELETE /api/draft/{draft_id}
+ *
+ * The remaining helpers are device-local UI preferences (tour, pane layout,
+ * auto-send acknowledgement) — they are not server state.
  */
+
+import type { Session, UserStyleProfile } from '@/types'
+
+const BASE = '/api'
+
+export class LocalAdapterError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'LocalAdapterError'
+    this.status = status
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit & { accountId?: string }): Promise<T> {
+  const { accountId, headers, ...rest } = init ?? {}
+  let response: Response
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(accountId ? { 'X-Account-ID': accountId } : {}),
+        ...(headers ?? {}),
+      },
+      ...rest,
+    })
+  } catch {
+    throw new LocalAdapterError('Cannot reach the local backend.', 0)
+  }
+  if (!response.ok) {
+    let detail = response.statusText
+    try {
+      const body = await response.json() as { detail?: string }
+      if (body.detail) detail = body.detail
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new LocalAdapterError(detail, response.status)
+  }
+  if (response.status === 204) return undefined as T
+  return await response.json() as T
+}
+
+/* ── Session pinning ─────────────────────────────────────────────────────── */
+
+/** Ids of the account's pinned sessions (server state). */
+export async function listPinnedSessions(accountId: string): Promise<string[]> {
+  const payload = await request<{ sessions: (Session & { pinned?: boolean })[] }>('/chat/sessions', { accountId })
+  return (payload.sessions ?? []).filter((session) => session.pinned).map((session) => session.id)
+}
+
+/** Pin or unpin a session. Returns the updated session summary. */
+export async function setPinnedSession(accountId: string, sessionId: string, pinned: boolean): Promise<Session> {
+  return request<Session>(`/chat/sessions/${encodeURIComponent(sessionId)}/pin`, {
+    method: 'PATCH',
+    body: JSON.stringify({ pinned }),
+    accountId,
+  })
+}
+
+/* ── Learned style rules ─────────────────────────────────────────────────── */
+
+export interface RecipientRule {
+  rule_id: string
+  recipient_email: string
+  text: string
+}
+
+/** Every per-recipient learned rule of the account. */
+export async function listRecipientRules(accountId: string): Promise<RecipientRule[]> {
+  const payload = await request<{ rules: RecipientRule[] }>('/profile/recipient-rules', { accountId })
+  return payload.rules ?? []
+}
+
+/** Edit a learned rule. ``rule_id`` is ``global:<index>`` or ``recipient:<email>:<index>``. */
+export async function updateRule(
+  accountId: string,
+  ruleId: string,
+  text: string,
+  scope?: 'global' | 'recipient',
+): Promise<{ rule_id: string; text: string }> {
+  const query = scope ? `?scope=${scope}` : ''
+  return request<{ rule_id: string; text: string }>(`/profile/rules/${encodeURIComponent(ruleId)}${query}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ text }),
+    accountId,
+  })
+}
+
+/** Forget a learned rule. */
+export async function forgetRule(
+  accountId: string,
+  ruleId: string,
+  scope?: 'global' | 'recipient',
+): Promise<{ forgotten: boolean; rule_id: string }> {
+  const query = scope ? `?scope=${scope}` : ''
+  return request<{ forgotten: boolean; rule_id: string }>(`/profile/rules/${encodeURIComponent(ruleId)}${query}`, {
+    method: 'DELETE',
+    accountId,
+  })
+}
+
+/** Forget a global rule by its text (used by the post-send "What I learned" card). */
+export async function forgetRuleByText(accountId: string, text: string): Promise<boolean> {
+  const profile = await request<UserStyleProfile>('/profile', { accountId })
+  const index = (profile.global_learned_rules ?? []).indexOf(text)
+  if (index < 0) return false
+  await forgetRule(accountId, `global:${index}`, 'global')
+  return true
+}
+
+/** Reset learned rules and corpus-derived stylometry for the account. */
+export async function resetProfile(accountId: string): Promise<UserStyleProfile> {
+  return request<UserStyleProfile>('/profile/reset', { method: 'POST', body: '{}', accountId })
+}
+
+/* ── Staged drafts (Save draft / Discard) ────────────────────────────────── */
+
+export interface DraftEdits {
+  to: string[]
+  cc: string[]
+  bcc: string[]
+  subject: string
+  body: string
+}
+
+/** Persist draft edits so they survive a reload. */
+export async function saveDraftEdits(
+  accountId: string,
+  draftId: string,
+  edits: DraftEdits,
+): Promise<{ draft_id: string; updated_at: string }> {
+  return request<{ draft_id: string; updated_at: string }>(`/draft/${encodeURIComponent(draftId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(edits),
+    accountId,
+  })
+}
+
+/** Discard a staged draft so it stays discarded after a reload. */
+export async function discardDraft(accountId: string, draftId: string): Promise<{ deleted: boolean; draft_id: string }> {
+  return request<{ deleted: boolean; draft_id: string }>(`/draft/${encodeURIComponent(draftId)}`, {
+    method: 'DELETE',
+    accountId,
+  })
+}
+
+/* ── Device-local UI preferences (not server state) ──────────────────────── */
 
 const PREFIX = 'proteus.local.v1'
 
@@ -37,90 +185,6 @@ function writeJson(key: string, value: unknown): void {
   }
 }
 
-/* ── Session pins (per account) ─────────────────────────────────────────── */
-// TODO(backend): replace with PATCH /api/chat/sessions/{session_id}/pin once available.
-
-export function getPinnedSessions(accountId: string): string[] {
-  const pins = readJson<string[]>(`pins.${accountId}`, [])
-  return Array.isArray(pins) ? pins.filter((id): id is string => typeof id === 'string') : []
-}
-
-export function setPinnedSessions(accountId: string, sessionIds: string[]): void {
-  writeJson(`pins.${accountId}`, sessionIds)
-}
-
-export function togglePinnedSession(accountId: string, sessionId: string): string[] {
-  const pins = getPinnedSessions(accountId)
-  const next = pins.includes(sessionId) ? pins.filter((id) => id !== sessionId) : [...pins, sessionId]
-  setPinnedSessions(accountId, next)
-  return next
-}
-
-/* ── Learned-rule overrides (per account) ───────────────────────────────── */
-// TODO(backend): DELETE /api/profile/rules/{rule_id} and PATCH /api/profile/rules/{rule_id}.
-
-export function getForgottenRules(accountId: string): string[] {
-  const rules = readJson<string[]>(`forgotten-rules.${accountId}`, [])
-  return Array.isArray(rules) ? rules.filter((rule): rule is string => typeof rule === 'string') : []
-}
-
-export function forgetRule(accountId: string, ruleText: string): void {
-  const forgotten = getForgottenRules(accountId)
-  if (!forgotten.includes(ruleText)) writeJson(`forgotten-rules.${accountId}`, [...forgotten, ruleText])
-}
-
-export function restoreRule(accountId: string, ruleText: string): void {
-  writeJson(`forgotten-rules.${accountId}`, getForgottenRules(accountId).filter((rule) => rule !== ruleText))
-}
-
-export function getRuleOverrides(accountId: string): Record<string, string> {
-  const overrides = readJson<Record<string, string>>(`rule-overrides.${accountId}`, {})
-  return overrides && typeof overrides === 'object' && !Array.isArray(overrides) ? overrides : {}
-}
-
-export function setRuleOverride(accountId: string, originalText: string, newText: string): void {
-  const overrides = getRuleOverrides(accountId)
-  if (newText === originalText) delete overrides[originalText]
-  else overrides[originalText] = newText
-  writeJson(`rule-overrides.${accountId}`, overrides)
-}
-
-export function clearRuleOverrides(accountId: string): void {
-  writeJson(`rule-overrides.${accountId}`, {})
-  writeJson(`forgotten-rules.${accountId}`, [])
-}
-
-/* ── Saved draft edits (per account) ────────────────────────────────────── */
-// TODO(backend): replace with PATCH /api/draft/{draft_id} once available.
-
-export interface SavedDraftEdits {
-  to: string[]
-  cc: string[]
-  bcc: string[]
-  subject: string
-  body: string
-  updatedAt: string
-}
-
-export function getSavedDraftEdits(accountId: string): Record<string, SavedDraftEdits> {
-  const edits = readJson<Record<string, SavedDraftEdits>>(`draft-edits.${accountId}`, {})
-  return edits && typeof edits === 'object' && !Array.isArray(edits) ? edits : {}
-}
-
-export function saveDraftEdits(accountId: string, draftId: string, edits: SavedDraftEdits): void {
-  const all = getSavedDraftEdits(accountId)
-  all[draftId] = edits
-  writeJson(`draft-edits.${accountId}`, all)
-}
-
-export function clearDraftEdits(accountId: string, draftId: string): void {
-  const all = getSavedDraftEdits(accountId)
-  delete all[draftId]
-  writeJson(`draft-edits.${accountId}`, all)
-}
-
-/* ── One-time UX flags ──────────────────────────────────────────────────── */
-
 export function isTourDone(): boolean {
   return readJson<boolean>('proteus_tour_done', false) === true
 }
@@ -137,8 +201,6 @@ export function isAutoSendConfirmed(accountId: string): boolean {
 export function setAutoSendConfirmed(accountId: string): void {
   writeJson(`autosend-confirmed.${accountId}`, true)
 }
-
-/* ── Pane layout (global, per device) ───────────────────────────────────── */
 
 export interface PaneLayout {
   leftWidth: number

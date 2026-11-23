@@ -7,12 +7,13 @@ import { Wordmark } from '@/components/ui/Wordmark'
 import { useClickOutside } from '@/hooks/useClickOutside'
 import { useDraftState } from '@/hooks/useDraftState'
 import { formatRelativeTime, sessionBucket, type SessionBucket } from '@/lib/format'
-import { getPinnedSessions, togglePinnedSession } from '@/lib/localAdapter'
+import { listPinnedSessions, setPinnedSession } from '@/lib/localAdapter'
 import { deriveSessionTitle, friendlyName } from '@/lib/status'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useActiveAccount, useAppStore } from '@/stores/useAppStore'
 import { useToastStore } from '@/stores/useToastStore'
+import { toast } from '@/stores/useToastStore'
 import { useWorkspaceUI } from '@/stores/useWorkspaceUI'
 import type { Provider, Session } from '@/types'
 
@@ -59,7 +60,7 @@ export function SessionRail({ collapsed, onToggleCollapsed, fullscreen = false, 
   const [renameDraft, setRenameDraft] = useState('')
   const [menuId, setMenuId] = useState<string | null>(null)
   const [hiddenIds, setHiddenIds] = useState<string[]>([])
-  const [pins, setPins] = useState<string[]>(() => activeAccountId ? getPinnedSessions(activeAccountId) : [])
+  const [pins, setPins] = useState<string[]>([])
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
@@ -69,13 +70,26 @@ export function SessionRail({ collapsed, onToggleCollapsed, fullscreen = false, 
   const accountMenuRef = useClickOutside<HTMLDivElement>(accountMenuOpen, () => setAccountMenuOpen(false))
   const menuRef = useClickOutside<HTMLDivElement>(menuId !== null, () => setMenuId(null))
 
-  // Pins are per-account: reload when the account changes (render-phase adjustment).
-  const [pinsAccount, setPinsAccount] = useState<string | null>(activeAccountId)
+  // Pins are per-account server state. The reset happens during render (no
+  // cascading setState); the fetch itself lives in an effect so it always runs.
+  const [pinsAccount, setPinsAccount] = useState<string | null>(null)
   if (pinsAccount !== activeAccountId) {
     setPinsAccount(activeAccountId)
-    setPins(activeAccountId ? getPinnedSessions(activeAccountId) : [])
+    setPins([])
     setHiddenIds([])
   }
+
+  useEffect(() => {
+    if (!pinsAccount) return
+    let cancelled = false
+    const load = () => listPinnedSessions(pinsAccount).then((ids) => { if (!cancelled) setPins(ids) })
+    // One retry absorbs a transient local-file race on the accounts index.
+    load()
+      .catch(() => new Promise((resolve) => setTimeout(resolve, 500)))
+      .then(load)
+      .catch(() => { if (!cancelled) setPins([]) })
+    return () => { cancelled = true }
+  }, [pinsAccount])
 
   useEffect(() => {
     if (renamingId) { renameInputRef.current?.focus(); renameInputRef.current?.select() }
@@ -199,12 +213,23 @@ export function SessionRail({ collapsed, onToggleCollapsed, fullscreen = false, 
     }, 8000))
   }, [activeSessionId, sessions, hiddenIds, selectSession, pushToast, dismissToast, effectiveTitle, deleteSession])
 
-  const handlePin = useCallback((sessionId: string) => {
+  const handlePin = useCallback(async (sessionId: string) => {
     if (!activeAccountId) return
-    // TODO(backend): PATCH /api/chat/sessions/{session_id}/pin — pins are local per account until then.
-    setPins(togglePinnedSession(activeAccountId, sessionId))
+    const next = !pins.includes(sessionId)
     setMenuId(null)
-  }, [activeAccountId])
+    try {
+      await setPinnedSession(activeAccountId, sessionId, next)
+    } catch {
+      toast('Could not update the pin.', 'warning')
+      return
+    }
+    setPins((current) => next ? [...current, sessionId] : current.filter((id) => id !== sessionId))
+    // Pinned sessions sort first server-side: refresh the rail order.
+    try {
+      const { sessions } = await api.listSessions(activeAccountId)
+      useAppStore.getState().setSessions(sessions)
+    } catch { /* keep the current order */ }
+  }, [activeAccountId, pins])
 
   const handleNavKeyDown = (event: KeyboardEvent) => {
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return

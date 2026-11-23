@@ -158,6 +158,18 @@ def setup_environment() -> None:
     os.environ["FRONTEND_URL"] = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
     log(f"EMAIL_WRITER_LOCAL_DATA_DIR set to {local_data_dir}")
 
+    # Ollama VRAM budget: a single 8B model with one parallel request fits the
+    # 8GB RTX 5060 Ti. Without these, Ollama fails with
+    # "unable to allocate CUDA_Host buffer" while loading the model.
+    for name, value in (
+        ("OLLAMA_NUM_PARALLEL", "1"),
+        ("OLLAMA_MAX_LOADED_MODELS", "1"),
+        ("OLLAMA_CONTEXT_LENGTH", "4096"),
+        ("OLLAMA_FLASH_ATTENTION", "1"),
+    ):
+        os.environ.setdefault(name, value)
+    log("Ollama VRAM defaults: num_parallel=1, max_loaded_models=1, context=4096, flash_attention=1")
+
 
 def ensure_ollama() -> bool:
     """Ensure Ollama is running and qwen3:8b model is available."""

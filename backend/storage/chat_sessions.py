@@ -54,7 +54,8 @@ class ChatSessionStore:
                     updated_at TEXT NOT NULL,
                     message_count INTEGER NOT NULL DEFAULT 0,
                     pending_clarification_json TEXT NOT NULL DEFAULT '{}',
-                    is_custom_title INTEGER NOT NULL DEFAULT 0
+                    is_custom_title INTEGER NOT NULL DEFAULT 0,
+                    pinned INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     message_id TEXT PRIMARY KEY,
@@ -91,6 +92,8 @@ class ChatSessionStore:
                                "pending_clarification_json TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(connection, "sessions", "is_custom_title",
                                "is_custom_title INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "sessions", "pinned",
+                               "pinned INTEGER NOT NULL DEFAULT 0")
 
     # --- sessions -----------------------------------------------------------
     def create_session(
@@ -131,8 +134,10 @@ class ChatSessionStore:
     @staticmethod
     def _session_row(row: sqlite3.Row) -> dict[str, Any]:
         import json
-        pending = row["pending_clarification_json"] if "pending_clarification_json" in row.keys() else "{}"
-        is_custom = row["is_custom_title"] if "is_custom_title" in row.keys() else 0
+        keys = row.keys()
+        pending = row["pending_clarification_json"] if "pending_clarification_json" in keys else "{}"
+        is_custom = row["is_custom_title"] if "is_custom_title" in keys else 0
+        pinned = row["pinned"] if "pinned" in keys else 0
         return {
             "session_id": row["session_id"],
             "account_id": row["account_id"],
@@ -142,21 +147,35 @@ class ChatSessionStore:
             "message_count": row["message_count"],
             "pending_clarification": json.loads(pending or "{}"),
             "is_custom_title": bool(is_custom),
+            "pinned": bool(pinned),
         }
 
     def list_sessions(self, account_id: str, limit: int = 50) -> list[dict[str, Any]]:
-        """List an account's sessions most-recently-updated first."""
+        """List an account's sessions: pinned first, then most-recently-updated."""
         with self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM sessions
                 WHERE account_id = ?
-                ORDER BY updated_at DESC
+                ORDER BY pinned DESC, updated_at DESC
                 LIMIT ?
                 """,
                 (account_id, limit),
             ).fetchall()
         return [self._session_row(row) for row in rows]
+
+    def set_session_pinned(self, session_id: str, pinned: bool) -> bool:
+        """Set (idempotently) the pinned flag of a session. Returns True when a row changed.
+
+        ``updated_at`` is intentionally left untouched: pinning is an ordering hint,
+        not new conversation activity.
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE sessions SET pinned = ? WHERE session_id = ?",
+                (1 if pinned else 0, session_id),
+            )
+            return cursor.rowcount > 0
 
     def rename_session(self, session_id: str, title: str) -> None:
         with self._connect() as connection:
@@ -400,6 +419,36 @@ class ChatSessionStore:
                 values,
             )
         return self.get_draft_card(row["card_id"])
+
+    def delete_draft_card_by_draft_id(self, draft_id: str) -> bool:
+        """Delete the staged card(s) for a draft id and detach them from their messages.
+
+        The assistant message keeps its turn but loses the card reference, so a
+        discarded draft stays discarded after a reload.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT card_id, session_id FROM draft_cards WHERE draft_id = ?", (draft_id,)
+            ).fetchall()
+            if not rows:
+                return False
+            for row in rows:
+                card_id = row["card_id"]
+                messages = connection.execute(
+                    "SELECT message_id, metadata_json FROM messages WHERE session_id = ? AND metadata_json LIKE ?",
+                    (row["session_id"], f"%{card_id}%"),
+                ).fetchall()
+                for message in messages:
+                    metadata = json.loads(message["metadata_json"] or "{}")
+                    metadata.pop("card_id", None)
+                    metadata.pop("draft_id", None)
+                    metadata["status"] = "DRAFT_DISCARDED"
+                    connection.execute(
+                        "UPDATE messages SET metadata_json = ? WHERE message_id = ?",
+                        (json.dumps(metadata), message["message_id"]),
+                    )
+                connection.execute("DELETE FROM draft_cards WHERE card_id = ?", (card_id,))
+        return True
 
     def latest_pending_draft_id(self, session_id: str) -> str | None:
         with self._connect() as connection:

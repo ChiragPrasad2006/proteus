@@ -11,7 +11,7 @@
 
 import { create } from 'zustand'
 import { api } from '@/lib/api'
-import { clearDraftEdits, getSavedDraftEdits, saveDraftEdits } from '@/lib/localAdapter'
+import { discardDraft, saveDraftEdits } from '@/lib/localAdapter'
 import { friendlyName, unifiedFromWire } from '@/lib/status'
 import { toast } from '@/stores/useToastStore'
 import type { EmailDraft, LearnedRule, UnifiedDraftStatus, WorkspaceDraft } from '@/types'
@@ -79,19 +79,6 @@ function fromCard(card: EmailDraft, sessionId: string, accountId: string): Works
     generatedBody: card.body,
   }
   base.versions = [makeVersion(base, 'generated')]
-  // Restore locally saved edits (Save draft) until a backend save endpoint exists.
-  // TODO(backend): PATCH /api/draft/{draft_id} — then drop this local restore.
-  if (status === 'draft' || status === 'pending_review') {
-    const saved = getSavedDraftEdits(accountId)[base.id]
-    if (saved) {
-      base.to = saved.to
-      base.cc = saved.cc
-      base.bcc = saved.bcc
-      base.subject = saved.subject
-      base.body = saved.body
-      base.updatedAt = saved.updatedAt
-    }
-  }
   return base
 }
 
@@ -132,7 +119,6 @@ export const useDraftState = create<DraftState>((set, get) => {
           learnedRules,
           sendError: undefined,
         })
-        clearDraftEdits(draft.accountId, draftId)
         toast(`Sent to ${current.to.map(friendlyName).join(', ') || 'your recipient'}.`, 'success')
       } else {
         patchDraft(draftId, {
@@ -221,28 +207,35 @@ export const useDraftState = create<DraftState>((set, get) => {
       patchDraft(draftId, { ...patch, updatedAt: new Date().toISOString() })
     },
 
-    saveDraft: (draftId) => {
+    saveDraft: async (draftId) => {
       const draft = get().drafts[draftId]
       if (!draft || draft.status === 'sent' || IN_FLIGHT.includes(draft.status)) return
-      // TODO(backend): PATCH /api/draft/{draft_id} — persist edits server-side.
-      saveDraftEdits(draft.accountId, draftId, {
-        to: draft.to,
-        cc: draft.cc,
-        bcc: draft.bcc,
-        subject: draft.subject,
-        body: draft.body,
-        updatedAt: new Date().toISOString(),
-      })
+      try {
+        await saveDraftEdits(draft.accountId, draftId, {
+          to: draft.to,
+          cc: draft.cc,
+          bcc: draft.bcc,
+          subject: draft.subject,
+          body: draft.body,
+        })
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'Could not save the draft.', 'warning', 6000)
+        return
+      }
       patchDraft(draftId, { status: 'draft', updatedAt: new Date().toISOString() })
-      toast('Draft saved on this device.')
+      toast('Draft saved.')
     },
 
-    discard: (draftId) => {
+    discard: async (draftId) => {
       const draft = get().drafts[draftId]
       if (!draft) return
       clearCountdownTimer(draftId)
-      clearDraftEdits(draft.accountId, draftId)
-      // TODO(backend): DELETE /api/draft/{draft_id} — remove the staged server draft.
+      try {
+        await discardDraft(draft.accountId, draftId)
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'Could not discard the draft.', 'warning', 6000)
+        return
+      }
       set((state) => {
         const drafts = { ...state.drafts }
         delete drafts[draftId]

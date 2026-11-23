@@ -168,6 +168,7 @@ function normalizeSessionSummary(value: unknown): Session {
     updatedAt: asString(raw.updated_at ?? raw.updatedAt),
     accountId: asString(raw.account_id ?? raw.accountId),
     isCustomTitle: Boolean(raw.is_custom_title ?? raw.isCustomTitle),
+    pinned: Boolean(raw.pinned ?? raw.is_pinned),
   }
 }
 
