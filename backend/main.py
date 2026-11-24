@@ -21,6 +21,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+SPA_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
 from backend.automation import Dispatcher, StyleLearner
 from backend.automation.contact_resolver import Contact, ContactResolver
 from backend.config import Settings
@@ -2135,7 +2141,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         index = frontend_dist / "index.html"
         if not index.is_file():
             raise HTTPException(status_code=404, detail="Frontend build not found.")
-        return FileResponse(index)
+        return FileResponse(index, headers=SPA_NO_CACHE_HEADERS)
 
     return app
 

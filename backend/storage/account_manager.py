@@ -3,11 +3,39 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+_INDEX_LOCK = threading.RLock()
+_INDEX_READ_ATTEMPTS = 3
+_INDEX_WRITE_ATTEMPTS = 5
+_INDEX_WRITE_BACKOFF_BASE = 0.02  # 20ms, max 100ms
+
+
+def _atomic_write_json(path: Path, data: dict[str, dict[str, Any]]) -> None:
+    """Atomically write JSON to path with fsync and Windows-safe retries."""
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        for attempt in range(_INDEX_WRITE_ATTEMPTS):
+            try:
+                os.replace(tmp_path, path)
+                return
+            except PermissionError:
+                if attempt == _INDEX_WRITE_ATTEMPTS - 1:
+                    raise
+                time.sleep(min(_INDEX_WRITE_BACKOFF_BASE * (attempt + 1), 0.1))
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 @dataclass
@@ -70,48 +98,56 @@ class AccountManager:
             self._save_index({})
 
     def _load_index(self) -> dict[str, dict[str, Any]]:
-        if not self.index_path.exists():
-            return {}
-        try:
-            index = json.loads(self.index_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return {}
+            def _read_with_retry() -> str:
+                for attempt in range(_INDEX_READ_ATTEMPTS):
+                    try:
+                        return self.index_path.read_text(encoding="utf-8")
+                    except PermissionError:
+                        if attempt == _INDEX_READ_ATTEMPTS - 1:
+                            raise
+                        time.sleep(0.05)
+                return ""  # unreachable
 
-        changed = False
-        for account_id, data in index.items():
-            if data.get("mailbox_connected"):
-                continue
-            paths = self.get_account_paths(account_id)
-            has_profile = False
-            profile_path = paths["profile_json"]
-            if profile_path.is_file():
+            with _INDEX_LOCK:
+                if not self.index_path.exists():
+                    return {}
                 try:
-                    has_profile = isinstance(json.loads(profile_path.read_text(encoding="utf-8")), dict)
-                except (OSError, json.JSONDecodeError):
-                    pass
-            has_credentials = False
-            password_path = paths["app_password"]
-            if password_path.is_file():
-                try:
-                    saved_token = password_path.read_text(encoding="utf-8").strip()
-                    has_credentials = saved_token.startswith(("dpapi:", "fernet:")) and len(saved_token) > 30
-                except OSError:
-                    pass
-            if has_profile or has_credentials:
-                data["mailbox_connected"] = True
-                data["updated_at"] = datetime.now(timezone.utc).isoformat()
-                changed = True
+                    index = json.loads(_read_with_retry())
+                except json.JSONDecodeError:
+                    return {}
 
-        if changed:
-            self._save_index(index)
-        return index
+                changed = False
+                for account_id, data in index.items():
+                    if data.get("mailbox_connected"):
+                        continue
+                    paths = self.get_account_paths(account_id)
+                    has_profile = False
+                    profile_path = paths["profile_json"]
+                    if profile_path.is_file():
+                        try:
+                            has_profile = isinstance(json.loads(profile_path.read_text(encoding="utf-8")), dict)
+                        except (OSError, json.JSONDecodeError):
+                            pass
+                    has_credentials = False
+                    password_path = paths["app_password"]
+                    if password_path.is_file():
+                        try:
+                            saved_token = password_path.read_text(encoding="utf-8").strip()
+                            has_credentials = saved_token.startswith(("dpapi:", "fernet:")) and len(saved_token) > 30
+                        except OSError:
+                            pass
+                    if has_profile or has_credentials:
+                        data["mailbox_connected"] = True
+                        data["updated_at"] = datetime.now(timezone.utc).isoformat()
+                        changed = True
+
+                if changed:
+                    self._save_index(index)
+                return index
 
     def _save_index(self, index: dict[str, dict[str, Any]]) -> None:
-        import tempfile
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=self.index_path.parent) as handle:
-            json.dump(index, handle, indent=2)
-            temp_path = Path(handle.name)
-        temp_path.replace(self.index_path)
+            with _INDEX_LOCK:
+                _atomic_write_json(self.index_path, index)
 
     def get_account_dir(self, account_id: str) -> Path:
         """Get the root directory for an account's isolated data."""
