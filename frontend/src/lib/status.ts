@@ -99,15 +99,15 @@ export interface AudienceInfo {
   why: string
 }
 
-export function audienceFor(to: string[], cc: string[], bcc: string[]): AudienceInfo {
-  if (bcc.length >= 2) {
+export function audienceInfo(mode: AudienceMode): AudienceInfo {
+  if (mode === 'broadcast_bcc') {
     return {
       mode: 'broadcast_bcc',
       label: 'Broadcast BCC',
-      why: 'Several recipients are hidden in BCC, so Proteus keeps the tone neutral and impersonal — no single person is addressed, and nobody sees the others.',
+      why: 'Recipients are hidden in BCC, so Proteus keeps the tone formal and impersonal — no single person is addressed, and nobody sees the others.',
     }
   }
-  if (cc.length > 0 || to.length > 1) {
+  if (mode === 'group_cc') {
     return {
       mode: 'group_cc',
       label: 'Group CC',
@@ -119,6 +119,12 @@ export function audienceFor(to: string[], cc: string[], bcc: string[]): Audience
     label: '1:1 Private',
     why: 'One recipient, no copies — Proteus matches your personal voice for this relationship, including your usual greeting and sign-off.',
   }
+}
+
+export function audienceFor(to: string[], cc: string[], bcc: string[]): AudienceInfo {
+  if (bcc.length > 0) return audienceInfo('broadcast_bcc')
+  if (cc.length > 0 || to.length > 1) return audienceInfo('group_cc')
+  return audienceInfo('1on1_private')
 }
 
 /** True when the user changed the machine-generated text before sending. */

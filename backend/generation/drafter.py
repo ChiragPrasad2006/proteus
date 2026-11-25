@@ -229,6 +229,37 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
             )
         return "\n\n".join(formatted)
 
+    def _format_resolution_context(self, context: dict[str, Any] | None) -> str:
+        """Render a deterministic resolution payload as authoritative prompt text."""
+        if not context:
+            return ""
+        lines = [
+            "=== DETERMINISTIC PERSONALIZATION POLICY (AUTHORITATIVE) ===",
+            f"Audience type: {context.get('audience_type', '1on1_private')}",
+        ]
+        greeting = str(context.get("greeting") or "").strip()
+        signoff = str(context.get("signoff") or "").strip()
+        if greeting:
+            lines.append(f"Greeting to use: {greeting}")
+        if signoff:
+            lines.append(f"Sign-off to use: {signoff}")
+        lines.append(f"Target sentence length: {context.get('target_sentence_length', 16)} words")
+        sections = (
+            ("Policy directives (apply in order):", context.get("policy_directives") or []),
+            ("Active rules (highest priority first):", context.get("applied_rules") or []),
+            ("Suppressed rules (DO NOT use):", context.get("suppressed_rules") or []),
+        )
+        for title, entries in sections:
+            if entries:
+                lines.append(title)
+                lines.extend(f"  - {entry}" for entry in entries)
+        if context.get("cold_start_fallback"):
+            lines.append(
+                "Cold-start fallback: use the formal global style card and a clean "
+                "professional baseline. Do NOT imitate casual 1:1 examples."
+            )
+        return "\n".join(lines)
+
     def _build_system_prompt(
         self,
         profile: UserStyleProfile,
@@ -238,6 +269,7 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
         bcc_recipients: list[str],
         recipient_profiles: dict[str, RecipientProfile] | None = None,
         first_name: str = "",
+        context: dict[str, Any] | None = None,
     ) -> str:
         """Build the complete system prompt with style profile, audience topology, and reference examples."""
         style_text = self._format_style_profile(profile)
@@ -249,23 +281,31 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
         audience_topology = self._format_audience_topology(to_recipients, cc_recipients, bcc_recipients, profile)
         examples_text = self._format_reference_examples(examples)
 
-        # Resolve greeting with first_name
+        # Resolve greeting with first_name. A resolved context greeting always
+        # wins over the corpus-derived greeting (deterministic policy layer).
         greeting_instruction = ""
-        if profile.deterministic_stylometry.top_greetings:
+        resolved_greeting = str((context or {}).get("greeting") or "").strip()
+        if resolved_greeting:
+            greeting_instruction = f"\nPRIMARY GREETING TO USE: {resolved_greeting}"
+        elif profile.deterministic_stylometry.top_greetings:
             top_greeting = profile.deterministic_stylometry.top_greetings[0].pattern
             if "{first_name}" in top_greeting:
-                resolved_greeting = top_greeting.replace("{first_name}", first_name) if first_name else top_greeting.replace("{first_name}", "").strip()
-                # Clean up any double spaces or trailing commas
-                resolved_greeting = re.sub(r"\s+", " ", resolved_greeting).strip()
-                resolved_greeting = re.sub(r",\s*,", ",", resolved_greeting)
-                greeting_instruction = f"\nPRIMARY GREETING TO USE: {resolved_greeting}"
+                derived = top_greeting.replace("{first_name}", first_name) if first_name else top_greeting.replace("{first_name}", "").strip()
+                derived = re.sub(r"\s+", " ", derived).strip()
+                derived = re.sub(r",\s*,", ",", derived)
+                greeting_instruction = f"\nPRIMARY GREETING TO USE: {derived}"
             else:
                 greeting_instruction = f"\nPRIMARY GREETING TO USE: {top_greeting}"
 
-        return (
+        resolution_text = self._format_resolution_context(context)
+        prefix = (
             f"{self.SYSTEM_PROMPT_TEMPLATE}\n\n"
             f"=== USER STYLE PROFILE ===\n{style_text}\n\n"
             f"{audience_topology}\n\n"
+        )
+        if resolution_text:
+            prefix += f"{resolution_text}\n\n"
+        return prefix + (
             f"=== REFERENCE EXAMPLES FROM USER'S PAST SENT EMAILS (STYLE ONLY) ===\n{examples_text}"
             f"{greeting_instruction}"
         )
@@ -347,7 +387,7 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
             rewritten.append(raw_line)
         return "\n".join(rewritten)
 
-    def _post_process_draft(self, draft: str, profile: UserStyleProfile) -> str:
+    def _post_process_draft(self, draft: str, profile: UserStyleProfile, signoff: str | None = None) -> str:
         """Clean up the draft: strip placeholders, markdown, leading Subject:, report headings, and deduplicate sign-off."""
         # Remove special tokens
         draft = re.sub(r"<\|im_end\|>", "", draft)
@@ -383,8 +423,9 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
         # Report/ticket headings must not survive as headings in a human email.
         draft = self._strip_report_headings(draft)
 
-        # Deduplicate sign-off
-        exact_signoff = profile.deterministic_stylometry.exact_signoff
+        # Deduplicate sign-off. A deterministic context sign-off outranks the
+        # corpus-derived one so group/broadcast mail never gets a 1:1 sign-off.
+        exact_signoff = (signoff or "").strip() or profile.deterministic_stylometry.exact_signoff
         if exact_signoff:
             lines = draft.rstrip().splitlines()
             # Remove any existing closing phrases at the end (check last few lines as a block)
@@ -444,6 +485,7 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
         cc_recipients: list[str] | None = None,
         bcc_recipients: list[str] | None = None,
         recipient_profiles: dict[str, RecipientProfile] | None = None,
+        context: dict[str, Any] | None = None,
     ) -> str:
         """Generate a personalized email draft with audience topology."""
         to_recipients = [recipient_email] if recipient_email else []
@@ -466,18 +508,23 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
         elif bcc_recipients and len(bcc_recipients) >= 2:
             target_audience_mode = "broadcast_bcc"
 
-        examples = self.vector_store.retrieve_few_shot_examples(
-            embedder=self.embedder,
-            recipient_email=recipient_email,
-            recipient_domain=recipient_domain,
-            query_text=query_text,
-            k=2,
-            target_audience_mode=target_audience_mode,
-        )
+        if context is not None:
+            # The deterministic resolver already filtered examples by audience.
+            examples = list(context.get("examples") or [])
+        else:
+            examples = self.vector_store.retrieve_few_shot_examples(
+                embedder=self.embedder,
+                recipient_email=recipient_email,
+                recipient_domain=recipient_domain,
+                query_text=query_text,
+                k=2,
+                target_audience_mode=target_audience_mode,
+            )
 
         # Build prompts with audience topology
         system_prompt = self._build_system_prompt(
-            profile, examples, to_recipients, cc_recipients, bcc_recipients, recipient_profiles, first_name
+            profile, examples, to_recipients, cc_recipients, bcc_recipients,
+            recipient_profiles, first_name, context=context,
         )
         user_prompt = self._build_user_prompt(intent_bullets, incoming_context)
 
@@ -485,6 +532,7 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
         if model_name is None:
             model_name = self.settings.model_name
 
+        resolved_signoff = str((context or {}).get("signoff") or "") or None
         for candidate_model in self.settings.ollama_models:
             try:
                 return self._generate_with_ollama(
@@ -493,6 +541,7 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
                     user_prompt=user_prompt,
                     profile=profile,
                     think=False,  # Fast drafting mode
+                    signoff=resolved_signoff,
                 )
             except DrafterUnavailable:
                 continue
@@ -504,6 +553,7 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     profile=profile,
+                    signoff=resolved_signoff,
                 )
             except DrafterUnavailable:
                 pass
@@ -519,6 +569,7 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
         to_recipients: list[str],
         cc_recipients: list[str],
         bcc_recipients: list[str],
+        context: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         """Revise only the content/tone of a pending email and return subject/body JSON."""
         endpoint = f"{self.settings.ollama_url.rstrip('/')}/api/chat"
@@ -533,10 +584,16 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
         )
         user_prompt = (
             f"To: {', '.join(to_recipients)}\nCc: {', '.join(cc_recipients)}\n"
-            f"Bcc: {', '.join(bcc_recipients)}\n\nCurrent subject:\n{subject}\n\n"
+            f"Bcc: {', '.join(bcc_recipients)}\n"
+            f"Audience type: {(context or {}).get('audience_type', '1on1_private')}\n\n"
+            f"Current subject:\n{subject}\n\n"
             f"Current body:\n{body}\n\nUser's revision instruction:\n{tweak_instruction}\n\n"
-            'Return exactly {"subject":"...","body":"..."}.'
+            'Return exactly {"subject":"...","body":"...".}'
         )
+        resolution_text = self._format_resolution_context(context)
+        if resolution_text:
+            system_prompt += "\n\n" + resolution_text
+        resolved_signoff = str((context or {}).get("signoff") or "") or None
         last_error = "No local inference runtime available for draft revision"
         for model_name in self.settings.ollama_models:
             try:
@@ -570,7 +627,7 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
                 if not isinstance(revised_subject, str) or not isinstance(revised_body, str):
                     raise ValueError("Model response must contain string subject and body fields.")
                 # Post-process the revised body too
-                revised_body = self._post_process_draft(revised_body, profile)
+                revised_body = self._post_process_draft(revised_body, profile, signoff=resolved_signoff)
                 return {"subject": revised_subject.strip(), "body": revised_body.strip()}
             except (httpx.HTTPError, ValueError, TypeError) as exc:
                 last_error = str(exc)
@@ -583,6 +640,7 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
         user_prompt: str,
         profile: UserStyleProfile,
         think: bool = False,
+        signoff: str | None = None,
     ) -> str:
         """Generate draft using local Ollama with think parameter."""
         endpoint = f"{self.settings.ollama_url.rstrip('/')}/api/chat"
@@ -634,13 +692,14 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
             raise DrafterUnavailable("Ollama returned empty response")
 
         draft = self._repair_json(content)
-        return self._post_process_draft(draft, profile)
+        return self._post_process_draft(draft, profile, signoff=signoff)
 
     def _generate_with_transformers(
         self,
         system_prompt: str,
         user_prompt: str,
         profile: UserStyleProfile,
+        signoff: str | None = None,
     ) -> str:
         """Generate draft using local Transformers model."""
         try:
@@ -698,4 +757,4 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
         content = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
 
         draft = self._repair_json(content)
-        return self._post_process_draft(draft, profile)
+        return self._post_process_draft(draft, profile, signoff=signoff)

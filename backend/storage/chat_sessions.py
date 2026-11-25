@@ -77,7 +77,9 @@ class ChatSessionStore:
                     body TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL DEFAULT 'DRAFT',
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    audience_type TEXT NOT NULL DEFAULT '1on1_private',
+                    resolution_meta_json TEXT NOT NULL DEFAULT '{}'
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_session
                     ON messages(session_id, created_at);
@@ -94,6 +96,10 @@ class ChatSessionStore:
                                "is_custom_title INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(connection, "sessions", "pinned",
                                "pinned INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "draft_cards", "audience_type",
+                               "audience_type TEXT NOT NULL DEFAULT '1on1_private'")
+            self._ensure_column(connection, "draft_cards", "resolution_meta_json",
+                               "resolution_meta_json TEXT NOT NULL DEFAULT '{}'")
 
     # --- sessions -----------------------------------------------------------
     def create_session(
@@ -311,10 +317,13 @@ class ChatSessionStore:
         draft_id: str | None = None,
         message_id: str | None = None,
         card_id: str | None = None,
+        audience_type: str | None = None,
+        resolution_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Insert a new draft card (or update an existing one by ``card_id``)."""
         card_id = card_id or str(uuid.uuid4())
         timestamp = _now()
+        meta_json = json.dumps(resolution_meta) if resolution_meta is not None else None
         with self._connect() as connection:
             existing = connection.execute(
                 "SELECT card_id, created_at FROM draft_cards WHERE card_id = ?", (card_id,)
@@ -324,7 +333,9 @@ class ChatSessionStore:
                     """
                     UPDATE draft_cards
                     SET to_json = ?, cc_json = ?, bcc_json = ?, subject = ?, body = ?,
-                        status = ?, draft_id = ?, message_id = ?, updated_at = ?
+                        status = ?, draft_id = ?, message_id = ?, updated_at = ?,
+                        audience_type = COALESCE(?, audience_type),
+                        resolution_meta_json = COALESCE(?, resolution_meta_json)
                     WHERE card_id = ?
                     """,
                     (
@@ -337,6 +348,8 @@ class ChatSessionStore:
                         draft_id,
                         message_id,
                         timestamp,
+                        audience_type,
+                        meta_json,
                         card_id,
                     ),
                 )
@@ -347,8 +360,9 @@ class ChatSessionStore:
                     """
                     INSERT INTO draft_cards
                     (card_id, session_id, message_id, draft_id, to_json, cc_json, bcc_json,
-                     subject, body, status, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     subject, body, status, created_at, updated_at, audience_type,
+                     resolution_meta_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         card_id,
@@ -363,6 +377,8 @@ class ChatSessionStore:
                         status,
                         created_at,
                         timestamp,
+                        audience_type or "1on1_private",
+                        meta_json or "{}",
                     ),
                 )
             self._touch(connection, session_id)
@@ -391,6 +407,8 @@ class ChatSessionStore:
         to: list[str] | None = None,
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
+        audience_type: str | None = None,
+        resolution_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         with self._connect() as connection:
             row = connection.execute(
@@ -413,6 +431,12 @@ class ChatSessionStore:
             if status is not None:
                 updates.append("status = ?")
                 values.append(status)
+            if audience_type is not None:
+                updates.append("audience_type = ?")
+                values.append(audience_type)
+            if resolution_meta is not None:
+                updates.append("resolution_meta_json = ?")
+                values.append(json.dumps(resolution_meta))
             values.append(row["card_id"])
             connection.execute(
                 f"UPDATE draft_cards SET {', '.join(updates)} WHERE card_id = ?",
@@ -460,6 +484,12 @@ class ChatSessionStore:
 
     @staticmethod
     def _card_row(row: sqlite3.Row) -> dict[str, Any]:
+        keys = row.keys()
+        meta_raw = row["resolution_meta_json"] if "resolution_meta_json" in keys else "{}"
+        try:
+            resolution_meta = json.loads(meta_raw or "{}")
+        except (TypeError, ValueError):
+            resolution_meta = {}
         return {
             "card_id": row["card_id"],
             "session_id": row["session_id"],
@@ -471,6 +501,8 @@ class ChatSessionStore:
             "subject": row["subject"],
             "body": row["body"],
             "status": row["status"],
+            "audience_type": row["audience_type"] if "audience_type" in keys else "1on1_private",
+            "resolution_meta": resolution_meta,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }

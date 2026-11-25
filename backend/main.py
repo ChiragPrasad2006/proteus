@@ -12,7 +12,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from urllib.parse import unquote
 
 import httpx
@@ -38,7 +38,12 @@ from backend.connectors import (
     LocalMailFileConnector,
     OutlookConnector,
 )
-from backend.generation import DrafterUnavailable, QwenDrafter
+from backend.generation import (
+    DrafterUnavailable,
+    QwenDrafter,
+    classify_audience,
+    resolve_draft_context,
+)
 from backend.connectors.gmail_connector import GMAIL_SEND_SCOPE
 from backend.processing import clean_raw_email, compute_stylometry
 from backend.profiler import ProfilerUnavailable, QwenStyleProfiler
@@ -739,6 +744,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         return _resolve_account(x_account_id)
 
+    def _resolution_account_id(account: AccountInfo | None, acc_settings: Settings) -> str:
+        """Stable account id for resolution metadata (header/body already verified)."""
+        if account is not None and account.account_id:
+            return account.account_id
+        name = acc_settings.local_user_data_dir.name
+        return name if name and name not in (".", "/") else "unknown"
+
+    def _build_resolution_context(
+        acc_settings: Settings,
+        account_id: str,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        store: ProfileStore,
+        query_text: str = "",
+        current_instructions: str = "",
+        k: int = 2,
+    ) -> dict[str, Any]:
+        """Run the deterministic policy layer before any model call."""
+        recipient_profiles: dict[str, dict[str, Any]] = {}
+        for email in to_recipients + cc_recipients:
+            if not email:
+                continue
+            recipient_profile = store.get_recipient_profile(email)
+            if recipient_profile:
+                recipient_profiles[email.lower()] = recipient_profile.model_dump(mode="json")
+        style_profile = store.load_profile()
+        global_profile = style_profile.model_dump(mode="json") if style_profile is not None else None
+
+        retrieved: list[dict[str, Any]] = []
+        if embedder is not None and to_recipients:
+            try:
+                embedder.load()
+                primary = to_recipients[0]
+                domain = primary.split("@")[-1] if "@" in primary else None
+                retrieved = LanceDBVectorStore(acc_settings).retrieve_few_shot_examples(
+                    embedder=embedder,
+                    recipient_email=primary,
+                    recipient_domain=domain,
+                    query_text=query_text,
+                    k=k,
+                    target_audience_mode=classify_audience(to_recipients, cc_recipients, bcc_recipients),
+                    strict_audience=True,
+                )
+            except Exception:
+                retrieved = []
+
+        return resolve_draft_context(
+            to=to_recipients,
+            cc=cc_recipients,
+            bcc=bcc_recipients,
+            account_id=account_id,
+            retrieved_emails=retrieved,
+            recipient_profiles=recipient_profiles,
+            global_profile=global_profile,
+            current_instructions=current_instructions,
+        )
+
     def _connector_for_account(acc_settings: Settings):
         """Prefer the verified local App Password; use Gmail REST only with gmail.send."""
         app_password_file = acc_settings.local_user_data_dir / "app_password.bin"
@@ -781,8 +844,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _revise_staged_draft(
         acc_settings: Settings,
         request: DraftTweakRequest,
+        account_id: str,
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-        """Revise and persist an existing pending draft without re-resolving recipients."""
+        """Re-resolve the audience, revise with the resolved policy, and persist it."""
         store = ProfileStore(acc_settings)
         pending = store.load_pending_draft(request.draft_id)
         if pending is None:
@@ -800,6 +864,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not to_recipients:
             raise HTTPException(status_code=422, detail="A staged draft must retain at least one To recipient.")
 
+        # Recompute audience on EVERY tweak: adding a Cc flips to group_cc and
+        # removing it restores the recipient's 1:1 rules; Bcc broadcasts.
+        context = _build_resolution_context(
+            acc_settings,
+            account_id,
+            to_recipients,
+            cc_recipients,
+            bcc_recipients,
+            store,
+            query_text=f"{subject} {body} {request.tweak_instruction}".strip(),
+            current_instructions=request.tweak_instruction,
+        )
+        audience_type = str(context["audience_type"])
+        resolution_meta = dict(context["resolution_meta"])
+
         try:
             revised = QwenDrafter(acc_settings).revise_email_draft(
                 profile=profile,
@@ -809,6 +888,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 to_recipients=to_recipients,
                 cc_recipients=cc_recipients,
                 bcc_recipients=bcc_recipients,
+                context=context,
             )
         except DrafterUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -818,8 +898,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "cc": cc_recipients,
             "bcc": bcc_recipients,
             "subject": revised["subject"],
+            "audience_type": audience_type,
+            "resolution_meta": resolution_meta,
         })
-        if not store.update_pending_draft(request.draft_id, request_data, revised["body"]):
+        if not store.update_pending_draft(
+            request.draft_id, request_data, revised["body"],
+            audience_type=audience_type, resolution_meta=resolution_meta,
+        ):
             raise HTTPException(status_code=404, detail="Pending draft disappeared during revision.")
 
         session_store = ChatSessionStore(acc_settings.chat_sessions_path)
@@ -831,8 +916,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             to=to_recipients,
             cc=cc_recipients,
             bcc=bcc_recipients,
+            audience_type=audience_type,
+            resolution_meta=resolution_meta,
         )
-        return {"draft_id": request.draft_id, **revised}, card
+        return {
+            "draft_id": request.draft_id,
+            **revised,
+            "audience_type": audience_type,
+            "resolution_meta": resolution_meta,
+        }, card
 
     def _looks_like_draft_tweak(text: str) -> bool:
         lowered = text.strip().lower()
@@ -1404,7 +1496,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: DraftRequest, ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx)
     ) -> DraftResponse:
         """Generate a personalized email draft using the fine-tuned Qwen model with audience topology."""
-        _, acc_settings = ctx
+        account, acc_settings = ctx
         store = ProfileStore(acc_settings)
         profile = store.load_profile()
         if profile is None:
@@ -1416,17 +1508,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Embedder unavailable: {exc}") from exc
 
-        vector_store = LanceDBVectorStore(acc_settings)
         to_recipients = [request.recipient_email] if request.recipient_email else []
         cc_recipients = request.cc or []
         bcc_recipients = request.bcc or []
+        query_text = " ".join([request.incoming_context or "", request.intent_bullets]).strip()
 
-        recipient_profiles = {}
-        for email in to_recipients + cc_recipients:
-            if email:
-                rp = store.get_recipient_profile(email)
-                if rp:
-                    recipient_profiles[email.lower()] = rp
+        # Deterministic policy resolution happens BEFORE the model is prompted.
+        context = _build_resolution_context(
+            acc_settings,
+            _resolution_account_id(account, acc_settings),
+            to_recipients,
+            cc_recipients,
+            bcc_recipients,
+            store,
+            query_text=query_text,
+            current_instructions=request.current_instructions or "",
+        )
 
         try:
             draft = QwenDrafter(acc_settings).generate_draft(
@@ -1438,7 +1535,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 model_name=request.model_name,
                 cc_recipients=cc_recipients,
                 bcc_recipients=bcc_recipients,
-                recipient_profiles=recipient_profiles,
+                recipient_profiles={
+                    email.lower(): rp
+                    for email in to_recipients + cc_recipients
+                    if email and (rp := store.get_recipient_profile(email)) is not None
+                },
+                context=context,
             )
         except DrafterUnavailable:
             # Offline installs still get a deterministic, clearly-shaped skeleton draft
@@ -1447,27 +1549,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 profile, _first_name_from_email(request.recipient_email), request.intent_bullets
             )
 
-        recipient_domain = None
-        if request.recipient_email:
-            recipient_domain = request.recipient_email.split("@")[-1] if "@" in request.recipient_email else None
-        query_text = " ".join([request.incoming_context or "", request.intent_bullets]).strip()
-
-        target_audience_mode = "1on1_private"
-        if cc_recipients:
-            target_audience_mode = "group_cc"
-        elif bcc_recipients and len(bcc_recipients) >= 2:
-            target_audience_mode = "broadcast_bcc"
-
-        examples = vector_store.retrieve_few_shot_examples(
-            embedder=embedder,
-            recipient_email=request.recipient_email,
-            recipient_domain=recipient_domain,
-            query_text=query_text,
-            k=2,
-            target_audience_mode=target_audience_mode,
-        )
         clean_examples = [
-            {k: v for k, v in ex.items() if k in RetrievedExample.model_fields} for ex in examples
+            {k: v for k, v in ex.items() if k in RetrievedExample.model_fields}
+            for ex in context["examples"]
         ]
 
         return DraftResponse(
@@ -1475,6 +1559,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             model_used=acc_settings.model_name,
             retrieved_examples=[RetrievedExample(**ex) for ex in clean_examples],
             profile_id=profile.profile_id,
+            audience_type=cast(Any, str(context["audience_type"])),
+            resolution_meta=dict(context["resolution_meta"]),
         )
 
     @app.post("/api/draft/tweak", response_model=DraftTweakResponse)
@@ -1483,8 +1569,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
     ) -> DraftTweakResponse:
         """Revise a pending draft in place, preserving its staged envelope and thread."""
-        _, acc_settings = ctx
-        revised, _ = _revise_staged_draft(acc_settings, request)
+        account, acc_settings = ctx
+        revised, _ = _revise_staged_draft(
+            acc_settings, request, _resolution_account_id(account, acc_settings)
+        )
         return DraftTweakResponse(**revised)
 
     @app.patch("/api/draft/{draft_id}", response_model=DraftUpdateResponse)
@@ -1494,7 +1582,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
     ) -> DraftUpdateResponse:
         """Persist edits to a staged draft so "Save draft" survives a reload."""
-        _, acc_settings = ctx
+        account, acc_settings = ctx
         store = ProfileStore(acc_settings)
         pending = store.load_pending_draft(draft_id)
         if pending is None:
@@ -1509,7 +1597,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.subject is not None:
             envelope["subject"] = request.subject
         body = request.body if request.body is not None else pending.get("draft", "")
-        store.update_pending_draft(draft_id, envelope, body)
+
+        # Live recipient edits must recompute the audience deterministically so
+        # the pill, the staged draft and the chat snapshot never disagree.
+        audience_type = classify_audience(
+            list(envelope.get("to") or []),
+            list(envelope.get("cc") or []),
+            list(envelope.get("bcc") or []),
+        )
+        resolution_meta = dict(pending.get("resolution_meta") or {})
+        resolution_meta.update({
+            "account_id": _resolution_account_id(account, acc_settings),
+            "audience_type": audience_type,
+        })
+        envelope["audience_type"] = audience_type
+        envelope["resolution_meta"] = resolution_meta
+        store.update_pending_draft(
+            draft_id, envelope, body,
+            audience_type=audience_type, resolution_meta=resolution_meta,
+        )
         # Keep the chat draft card in sync so the session view matches the saved draft.
         sessions = ChatSessionStore(acc_settings.chat_sessions_path)
         card = sessions.update_draft_card_by_draft_id(
@@ -1520,9 +1626,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             to=list(envelope.get("to") or []),
             cc=list(envelope.get("cc") or []),
             bcc=list(envelope.get("bcc") or []),
+            audience_type=audience_type,
+            resolution_meta=resolution_meta,
         )
         updated_at = str((card or {}).get("updated_at") or datetime.now(timezone.utc).isoformat())
-        return DraftUpdateResponse(draft_id=draft_id, updated_at=updated_at)
+        return DraftUpdateResponse(
+            draft_id=draft_id,
+            updated_at=updated_at,
+            audience_type=cast(Any, audience_type),
+            resolution_meta=resolution_meta,
+        )
 
     @app.delete("/api/draft/{draft_id}", response_model=DraftDeleteResponse)
     def discard_staged_draft(
@@ -1802,11 +1915,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     draft_id=pending_draft_id,
                     tweak_instruction=request.user_message,
                 ),
+                _resolution_account_id(account, acc_settings),
             )
             if card is None:
                 raise HTTPException(status_code=404, detail="The staged chat draft card was not found.")
             card["subject"] = revised["subject"]
             card["body"] = revised["body"]
+            card["audience_type"] = revised["audience_type"]
+            card["resolution_meta"] = revised["resolution_meta"]
             review_reason = "Revised draft is ready for review before sending."
             card["warnings"] = [{
                 "id": "review-revised-draft",
@@ -1822,7 +1938,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 session_id,
                 "assistant",
                 assistant_message,
-                metadata={"status": "PENDING_REVIEW", "card_id": card["card_id"], "draft_id": pending_draft_id},
+                metadata={
+                    "status": "PENDING_REVIEW",
+                    "card_id": card["card_id"],
+                    "draft_id": pending_draft_id,
+                    "audience_type": revised["audience_type"],
+                    "resolution_meta": revised["resolution_meta"],
+                },
             )
             # Auto-update session title if not custom (subject may have changed)
             session_summary = sessions.get_session_summary(session_id)
@@ -1955,6 +2077,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             review_reasons.append("auto_send is False (first-recipient gate)")
 
         profile = store.load_profile()
+        # Deterministic audience/policy resolution runs once, before drafting.
+        resolution_context = _build_resolution_context(
+            acc_settings,
+            _resolution_account_id(account, acc_settings),
+            to_emails,
+            cc_emails,
+            bcc_emails,
+            store,
+            query_text=parsed["intent_bullets"],
+            current_instructions=request.user_message,
+        )
+        audience_type = str(resolution_context["audience_type"])
+        resolution_meta = dict(resolution_context["resolution_meta"])
         draft_body: str | None = None
         draft_source = "model"
         if profile is None:
@@ -1975,6 +2110,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     cc_recipients=cc_emails,
                     bcc_recipients=bcc_emails,
                     recipient_profiles=recipient_profiles,
+                    context=resolution_context,
                 )
             except DrafterUnavailable as exc:
                 draft_source = "fallback_template"
@@ -2020,6 +2156,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             body=draft_body or "",
             status=status,
             draft_id=draft_id,
+            audience_type=audience_type,
+            resolution_meta=resolution_meta,
         )
         card["warnings"] = [
             {
@@ -2051,14 +2189,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         request_json TEXT NOT NULL,
                         draft TEXT NOT NULL,
                         created_at TEXT NOT NULL,
-                        recipient_profiles_json TEXT NOT NULL
+                        recipient_profiles_json TEXT NOT NULL,
+                        audience_type TEXT NOT NULL DEFAULT '1on1_private',
+                        resolution_meta_json TEXT NOT NULL DEFAULT '{}'
                     )
                     """
                 )
                 connection.execute(
                     """
-                    INSERT INTO pending_drafts (draft_id, profile_id, request_json, draft, created_at, recipient_profiles_json)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO pending_drafts (draft_id, profile_id, request_json, draft, created_at,
+                                                recipient_profiles_json, audience_type, resolution_meta_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         draft_id,
@@ -2074,10 +2215,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "in_reply_to": None,
                             "session_id": session_id,
                             "card_id": card["card_id"],
+                            "audience_type": audience_type,
+                            "resolution_meta": resolution_meta,
                         }),
                         draft_body,
                         datetime.now(timezone.utc).isoformat(),
                         json.dumps(recipient_profiles_data),
+                        audience_type,
+                        json.dumps(resolution_meta),
                     ),
                 )
 
@@ -2092,7 +2237,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session_id,
             "assistant",
             assistant_message,
-            metadata={"status": status, "card_id": card["card_id"], "draft_source": draft_source},
+            metadata={
+                "status": status,
+                "card_id": card["card_id"],
+                "draft_source": draft_source,
+                "audience_type": audience_type,
+                "resolution_meta": resolution_meta,
+            },
         )
 
         # Auto-update session title if not custom

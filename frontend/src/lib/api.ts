@@ -2,6 +2,7 @@
 
 import type {
   Account,
+  AudienceMode,
   ChatMessage,
   ContactResolution,
   DraftStatus,
@@ -130,6 +131,8 @@ function normalizeEmailDraft(value: unknown, reviewReason: string): EmailDraft {
     : reviewReason ? reviewReason.split(';').map((detail) => ({ detail: detail.trim() })) : []
   const statuses: DraftStatus[] = ['DRAFT', 'PENDING_REVIEW', 'SENT', 'FAILED']
   const status = statuses.includes(raw.status as DraftStatus) ? raw.status as DraftStatus : 'DRAFT'
+  const audiences: AudienceMode[] = ['1on1_private', 'group_cc', 'broadcast_bcc']
+  const audience = raw.audience_type ?? raw.audienceType
   const rawExamples = raw.retrieved_examples ?? raw.retrievedExamples
   const examples = Array.isArray(rawExamples) ? rawExamples : []
   return {
@@ -156,6 +159,8 @@ function normalizeEmailDraft(value: unknown, reviewReason: string): EmailDraft {
     modelUsed: asString(raw.model_used ?? raw.modelUsed),
     status,
     reviewReason: asString(raw.review_reason ?? raw.reviewReason) || reviewReason || undefined,
+    audienceType: audiences.includes(audience as AudienceMode) ? audience as AudienceMode : undefined,
+    resolutionMeta: asRecord(raw.resolution_meta ?? raw.resolutionMeta),
   }
 }
 
@@ -395,16 +400,27 @@ export const api = {
     current_bcc: string[]
     current_subject: string
     current_body: string
-  }, accountId?: string): Promise<{ draft_id: string; subject: string; body: string }> => {
+  }, accountId?: string): Promise<{
+    draft_id: string
+    subject: string
+    body: string
+    audience_type: AudienceMode
+    resolution_meta: Record<string, unknown>
+  }> => {
     const raw = asRecord(await request<unknown>('/draft/tweak', {
       method: 'POST',
       body: JSON.stringify(payload),
       accountId,
     }))
+    const audienceType = raw.audience_type ?? raw.audienceType
+    const audiences: AudienceMode[] = ['1on1_private', 'group_cc', 'broadcast_bcc']
     return {
       draft_id: asString(raw.draft_id),
       subject: asString(raw.subject),
       body: asString(raw.body),
+      audience_type: audiences.includes(audienceType as AudienceMode)
+        ? audienceType as AudienceMode : '1on1_private',
+      resolution_meta: asRecord(raw.resolution_meta ?? raw.resolutionMeta),
     }
   },
 

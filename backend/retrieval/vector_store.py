@@ -203,6 +203,7 @@ class LanceDBVectorStore:
         k=2,
         min_word_count=25,
         target_audience_mode: str = "1on1_private",
+        strict_audience: bool = False,
     ):
         """
         Overfetch + Time-Decayed Hybrid Reranking:
@@ -220,18 +221,20 @@ class LanceDBVectorStore:
         query_vector = embedder.encode_single(query_text) if query_text else None
         overfetch_k = 15  # Overfetch for reranking
 
-        # Build base filter
+        # Build base filter. Strict audience mode turns the audience boost into
+        # a hard filter so group/broadcast drafting never sees 1:1 examples.
         filter_parts = []
         if min_word_count:
             filter_parts.append(f"word_count >= {min_word_count}")
+        if strict_audience:
+            escaped_audience = self._escape_sql(target_audience_mode)
+            filter_parts.append(f"audience_mode = '{escaped_audience}'")
 
         # Stage 1: Exact recipient matches (higher priority in overfetch)
         exact_matches = []
         if recipient_email:
             escaped_email = self._escape_sql(recipient_email)
-            filter_sql = f"recipient_email = '{escaped_email}'"
-            if min_word_count:
-                filter_sql += f" AND word_count >= {min_word_count}"
+            filter_sql = " AND ".join([f"recipient_email = '{escaped_email}'"] + list(filter_parts))
             try:
                 exact_results = (
                     table.search(query_vector.tolist() if query_vector is not None else None)
@@ -247,13 +250,14 @@ class LanceDBVectorStore:
         domain_matches = []
         if recipient_domain and (not recipient_email or len(exact_matches) < overfetch_k):
             escaped_domain = self._escape_sql(recipient_domain)
-            filter_parts = [f"recipient_domain = '{escaped_domain}'"]
+            domain_parts = [f"recipient_domain = '{escaped_domain}'"] + list(filter_parts)
             if recipient_email:
                 escaped_email = self._escape_sql(recipient_email)
-                filter_parts.append(f"recipient_email != '{escaped_email}'")
-            if min_word_count:
-                filter_parts.append(f"word_count >= {min_word_count}")
-            filter_sql = " AND ".join(filter_parts)
+                domain_parts.append(f"recipient_email != '{escaped_email}'")
+            filter_sql = " AND ".join(domain_parts)
+            # Preserve legacy behaviour: the domain scope also constrains the
+            # later pure-semantic backfill stage when it needs more candidates.
+            filter_parts = domain_parts
             try:
                 domain_results = (
                     table.search(query_vector.tolist() if query_vector is not None else None)

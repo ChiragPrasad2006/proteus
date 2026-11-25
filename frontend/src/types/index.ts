@@ -105,6 +105,9 @@ export interface WorkspaceDraft {
   subject: string
   body: string
   status: UnifiedDraftStatus
+  /** Audience resolved by the backend's deterministic policy layer. */
+  audienceType: AudienceMode
+  resolutionMeta?: Record<string, unknown>
   /** Raw backend reason — internal only, never rendered verbatim. */
   reviewReason?: string
   modelUsed: string
@@ -144,6 +147,9 @@ export interface EmailDraft {
   modelUsed: string
   status: DraftStatus
   reviewReason?: string
+  /** Audience resolved by the backend's deterministic policy layer. */
+  audienceType?: AudienceMode
+  resolutionMeta?: Record<string, unknown>
 }
 
 export type MessageRole = 'user' | 'assistant'

@@ -67,12 +67,21 @@ class ProfileStore:
                     request_json TEXT NOT NULL,
                     draft TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    recipient_profiles_json TEXT NOT NULL
+                    recipient_profiles_json TEXT NOT NULL,
+                    audience_type TEXT NOT NULL DEFAULT '1on1_private',
+                    resolution_meta_json TEXT NOT NULL DEFAULT '{}'
                 );
                 """
             )
             # Idempotent migrations for existing databases
-            # No new columns needed currently, but migration guard is in place for future changes
+            self._ensure_column(
+                connection, "pending_drafts", "audience_type",
+                "audience_type TEXT NOT NULL DEFAULT '1on1_private'",
+            )
+            self._ensure_column(
+                connection, "pending_drafts", "resolution_meta_json",
+                "resolution_meta_json TEXT NOT NULL DEFAULT '{}'",
+            )
 
     def _index_messages(self, kind: str, records: Sequence[RawSentEmail | CleanedSentEmail]) -> None:
         """Refresh searchable metadata while keeping full personal text in local JSONL only."""
@@ -388,13 +397,14 @@ class ProfileStore:
         """Load a pending draft from SQLite."""
         with sqlite3.connect(self.settings.sqlite_path) as connection:
             cursor = connection.execute(
-                "SELECT draft_id, profile_id, request_json, draft, created_at, recipient_profiles_json FROM pending_drafts WHERE draft_id = ?",
+                """SELECT draft_id, profile_id, request_json, draft, created_at,
+                          recipient_profiles_json, audience_type, resolution_meta_json
+                   FROM pending_drafts WHERE draft_id = ?""",
                 (draft_id,),
             )
             row = cursor.fetchone()
             if not row:
                 return None
-            import json
             return {
                 "draft_id": row[0],
                 "profile_id": row[1],
@@ -402,14 +412,32 @@ class ProfileStore:
                 "draft": row[3],
                 "created_at": row[4],
                 "recipient_profiles": json.loads(row[5]),
+                "audience_type": row[6] or "1on1_private",
+                "resolution_meta": json.loads(row[7] or "{}") if row[7] else {},
             }
 
-    def update_pending_draft(self, draft_id: str, request_data: dict[str, Any], draft: str) -> bool:
+    def update_pending_draft(
+        self,
+        draft_id: str,
+        request_data: dict[str, Any],
+        draft: str,
+        audience_type: str | None = None,
+        resolution_meta: dict[str, Any] | None = None,
+    ) -> bool:
         """Persist a revised pending draft while retaining its recipient metadata."""
+        updates = ["request_json = ?", "draft = ?"]
+        values: list[Any] = [json.dumps(request_data), draft]
+        if audience_type is not None:
+            updates.append("audience_type = ?")
+            values.append(audience_type)
+        if resolution_meta is not None:
+            updates.append("resolution_meta_json = ?")
+            values.append(json.dumps(resolution_meta))
+        values.append(draft_id)
         with sqlite3.connect(self.settings.sqlite_path) as connection:
             cursor = connection.execute(
-                "UPDATE pending_drafts SET request_json = ?, draft = ? WHERE draft_id = ?",
-                (json.dumps(request_data), draft, draft_id),
+                f"UPDATE pending_drafts SET {', '.join(updates)} WHERE draft_id = ?",
+                values,
             )
             return cursor.rowcount > 0
 

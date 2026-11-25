@@ -12,7 +12,7 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
 import { discardDraft, saveDraftEdits } from '@/lib/localAdapter'
-import { friendlyName, unifiedFromWire } from '@/lib/status'
+import { audienceFor, friendlyName, unifiedFromWire } from '@/lib/status'
 import { toast } from '@/stores/useToastStore'
 import type { EmailDraft, LearnedRule, UnifiedDraftStatus, WorkspaceDraft } from '@/types'
 import { uid } from '@/lib/utils'
@@ -68,6 +68,8 @@ function fromCard(card: EmailDraft, sessionId: string, accountId: string): Works
     subject: card.subject,
     body: card.body,
     status,
+    audienceType: card.audienceType ?? audienceFor(card.to, card.cc, card.bcc).mode,
+    resolutionMeta: card.resolutionMeta,
     reviewReason: card.reviewReason,
     modelUsed: card.modelUsed,
     createdAt: now,
@@ -160,7 +162,13 @@ export const useDraftState = create<DraftState>((set, get) => {
             drafts[incoming.id] = { ...existing, status: 'sent', sentAt: existing.sentAt ?? incoming.sentAt, reviewReason: incoming.reviewReason }
             continue
           }
-          drafts[incoming.id] = { ...existing, reviewReason: incoming.reviewReason, modelUsed: incoming.modelUsed || existing.modelUsed }
+          drafts[incoming.id] = {
+            ...existing,
+            reviewReason: incoming.reviewReason,
+            modelUsed: incoming.modelUsed || existing.modelUsed,
+            audienceType: incoming.audienceType ?? existing.audienceType,
+            resolutionMeta: incoming.resolutionMeta ?? existing.resolutionMeta,
+          }
         }
         const selected = state.selectedDraftId && drafts[state.selectedDraftId] ? state.selectedDraftId : null
         return { drafts, accountId, selectedDraftId: selected }
@@ -185,6 +193,8 @@ export const useDraftState = create<DraftState>((set, get) => {
             body: incoming.body,
             reviewReason: incoming.reviewReason,
             modelUsed: incoming.modelUsed || existing.modelUsed,
+            audienceType: incoming.audienceType ?? existing.audienceType,
+            resolutionMeta: incoming.resolutionMeta ?? existing.resolutionMeta,
             status: IN_FLIGHT.includes(existing.status) ? existing.status : incoming.status,
             sentAt: incoming.status === 'sent' ? (existing.sentAt ?? incoming.sentAt) : existing.sentAt,
             updatedAt: new Date().toISOString(),
@@ -205,24 +215,61 @@ export const useDraftState = create<DraftState>((set, get) => {
       const draft = get().drafts[draftId]
       if (!draft || draft.status === 'sent' || IN_FLIGHT.includes(draft.status)) return
       patchDraft(draftId, { ...patch, updatedAt: new Date().toISOString() })
+      const touchesRecipients =
+        Object.prototype.hasOwnProperty.call(patch, 'to') ||
+        Object.prototype.hasOwnProperty.call(patch, 'cc') ||
+        Object.prototype.hasOwnProperty.call(patch, 'bcc')
+      if (!touchesRecipients) return
+
+      // Predict the pill locally, then reconcile with the backend's authoritative
+      // audience from PATCH /api/draft/{id}. No reload needed for the chip edit.
+      const next = { ...draft, ...patch }
+      patchDraft(draftId, { audienceType: audienceFor(next.to, next.cc, next.bcc).mode })
+      void saveDraftEdits(draft.accountId, draftId, {
+        to: next.to,
+        cc: next.cc,
+        bcc: next.bcc,
+        subject: next.subject,
+        body: next.body,
+      }).then((result) => {
+        const current = get().drafts[draftId]
+        if (!current) return
+        // Ignore a stale response if the user changed recipients again meanwhile.
+        if (JSON.stringify([current.to, current.cc, current.bcc]) !== JSON.stringify([next.to, next.cc, next.bcc])) return
+        patchDraft(draftId, {
+          audienceType: result.audience_type ?? current.audienceType,
+          resolutionMeta: result.resolution_meta ?? current.resolutionMeta,
+        })
+      }).catch(() => {
+        // Keep the optimistic prediction; the next Save/Refine will reconcile.
+      })
     },
 
     saveDraft: async (draftId) => {
       const draft = get().drafts[draftId]
       if (!draft || draft.status === 'sent' || IN_FLIGHT.includes(draft.status)) return
+      let savedAudience = audienceFor(draft.to, draft.cc, draft.bcc).mode
+      let savedMeta: Record<string, unknown> | undefined
       try {
-        await saveDraftEdits(draft.accountId, draftId, {
+        const result = await saveDraftEdits(draft.accountId, draftId, {
           to: draft.to,
           cc: draft.cc,
           bcc: draft.bcc,
           subject: draft.subject,
           body: draft.body,
         })
+        savedAudience = result.audience_type ?? savedAudience
+        savedMeta = result.resolution_meta
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Could not save the draft.', 'warning', 6000)
         return
       }
-      patchDraft(draftId, { status: 'draft', updatedAt: new Date().toISOString() })
+      patchDraft(draftId, {
+        status: 'draft',
+        updatedAt: new Date().toISOString(),
+        audienceType: savedAudience,
+        resolutionMeta: savedMeta ?? draft.resolutionMeta,
+      })
       toast('Draft saved.')
     },
 
@@ -271,6 +318,8 @@ export const useDraftState = create<DraftState>((set, get) => {
           generatedBody: result.body,
           status: 'pending_review',
           updatedAt: new Date().toISOString(),
+          audienceType: result.audience_type ?? current.audienceType,
+          resolutionMeta: result.resolution_meta ?? current.resolutionMeta,
           versions: [...current.versions, version],
         })
         toast(`Draft refined — ${version.label} ready for review.`)

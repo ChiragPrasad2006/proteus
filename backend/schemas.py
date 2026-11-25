@@ -181,6 +181,7 @@ class DraftRequest(StrictModel):
     model_name: str | None = None
     cc: list[str] = Field(default_factory=list)
     bcc: list[str] = Field(default_factory=list)
+    current_instructions: str | None = None
 
 
 class DraftResponse(StrictModel):
@@ -190,6 +191,8 @@ class DraftResponse(StrictModel):
     model_used: str
     retrieved_examples: list[RetrievedExample] = Field(default_factory=list)
     profile_id: str
+    audience_type: AudienceMode = "1on1_private"
+    resolution_meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class ReindexRequest(StrictModel):
@@ -362,6 +365,8 @@ class DraftTweakResponse(StrictModel):
     draft_id: str
     subject: str
     body: str
+    audience_type: AudienceMode = "1on1_private"
+    resolution_meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChatTurnRequest(StrictModel):
@@ -439,6 +444,8 @@ class DraftUpdateRequest(StrictModel):
 class DraftUpdateResponse(StrictModel):
     draft_id: str
     updated_at: str
+    audience_type: AudienceMode = "1on1_private"
+    resolution_meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class DraftDeleteResponse(StrictModel):

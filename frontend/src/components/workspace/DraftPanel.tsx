@@ -8,7 +8,7 @@ import { IconButton } from '@/components/ui/IconButton'
 import { useCountdownSeconds } from '@/hooks/useCountdown'
 import { draftsForSession, useDraftState, useSelectedDraft } from '@/hooks/useDraftState'
 import { forgetRuleByText } from '@/lib/localAdapter'
-import { audienceFor, draftWasEdited, friendlyName } from '@/lib/status'
+import { audienceFor, audienceInfo, draftWasEdited, friendlyName } from '@/lib/status'
 import { cn, isValidEmail } from '@/lib/utils'
 import { useAppStore } from '@/stores/useAppStore'
 import { toast } from '@/stores/useToastStore'
@@ -82,7 +82,7 @@ export function DraftPanel({ onClose }: DraftPanelProps) {
   }
 
   const editable = draft.status !== 'sent' && draft.status !== 'sending' && draft.status !== 'sending_countdown'
-  const audience = audienceFor(draft.to, draft.cc, draft.bcc)
+  const audience = audienceInfo(draft.audienceType ?? audienceFor(draft.to, draft.cc, draft.bcc).mode)
   const versions = draft.versions
   const currentVersionIndex = versionIndex === null ? versions.length - 1 : Math.min(versionIndex, versions.length - 1)
   const currentVersion = versions[currentVersionIndex]
@@ -401,6 +401,10 @@ export function DraftPanel({ onClose }: DraftPanelProps) {
           {detailsOpen ? (
             <dl className="space-y-1 px-5 pb-4 font-mono text-[12px] text-ink-muted">
               <div className="flex gap-2"><dt className="shrink-0">model</dt><dd className="truncate text-ink">{draft.modelUsed || 'qwen3:8b'}</dd></div>
+              <div className="flex gap-2"><dt className="shrink-0">audience</dt><dd className="truncate text-ink">{audience.mode}</dd></div>
+              {draft.resolutionMeta?.cold_start_fallback ? (
+                <div className="flex gap-2"><dt className="shrink-0">baseline</dt><dd>formal cold-start (no matching examples)</dd></div>
+              ) : null}
               <div className="flex gap-2"><dt className="shrink-0">mode</dt><dd>think=false draft / think=true learn</dd></div>
               <div className="flex gap-2"><dt className="shrink-0">draft_id</dt><dd className="truncate text-ink">{draft.id}</dd></div>
             </dl>

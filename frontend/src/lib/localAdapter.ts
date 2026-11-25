@@ -16,7 +16,7 @@
  * auto-send acknowledgement) — they are not server state.
  */
 
-import type { Session, UserStyleProfile } from '@/types'
+import type { AudienceMode, Session, UserStyleProfile } from '@/types'
 
 const BASE = '/api'
 
@@ -147,8 +147,18 @@ export async function saveDraftEdits(
   accountId: string,
   draftId: string,
   edits: DraftEdits,
-): Promise<{ draft_id: string; updated_at: string }> {
-  return request<{ draft_id: string; updated_at: string }>(`/draft/${encodeURIComponent(draftId)}`, {
+): Promise<{
+  draft_id: string
+  updated_at: string
+  audience_type?: AudienceMode
+  resolution_meta?: Record<string, unknown>
+}> {
+  return request<{
+    draft_id: string
+    updated_at: string
+    audience_type?: AudienceMode
+    resolution_meta?: Record<string, unknown>
+  }>(`/draft/${encodeURIComponent(draftId)}`, {
     method: 'PATCH',
     body: JSON.stringify(edits),
     accountId,
