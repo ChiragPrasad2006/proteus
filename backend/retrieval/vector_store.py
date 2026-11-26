@@ -200,7 +200,7 @@ class LanceDBVectorStore:
         recipient_email=None,
         recipient_domain=None,
         query_text="",
-        k=2,
+        k=5,
         min_word_count=25,
         target_audience_mode: str = "1on1_private",
         strict_audience: bool = False,
@@ -212,7 +212,7 @@ class LanceDBVectorStore:
            Score(q, d) = 0.75 * Sim_cos(q, d) + 0.25 * exp(-lambda * delta_t_days) + beta_recipient + beta_audience
            where lambda = ln(2)/90 (90-day half-life), beta_recipient = +0.12 if d.recipient_email == primary_to,
            beta_audience = +0.06 if d.audience_mode == target_audience_mode
-        3. Return the top 2 highest-scoring examples
+        3. Return the top k highest-scoring examples (default k=5 for confidence assessment)
         """
         table = self._get_or_create_table()
         if table.count_rows() == 0:
@@ -306,9 +306,9 @@ class LanceDBVectorStore:
 
         scored = []
         for candidate in all_candidates:
-            # Cosine similarity (LanceDB returns _distance, convert to similarity)
-            distance = candidate.get("_distance", 1.0)
-            cos_sim = max(0.0, 1.0 - distance)
+            # Cosine similarity: LanceDB defaults to squared L2 on unit vectors (l2_sq = 2 * (1 - cos_sim)).
+            distance = candidate.get("_distance", 2.0)
+            cos_sim = max(0.0, min(1.0, 1.0 - (float(distance) / 2.0)))
 
             # Time decay
             timestamp_epoch = candidate.get("timestamp_epoch", 0.0)

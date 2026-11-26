@@ -213,7 +213,7 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
             return "No reference examples available."
 
         formatted = []
-        for i, ex in enumerate(examples, 1):
+        for i, ex in enumerate(examples[:3], 1):
             greeting = ex.get("greeting", "")
             signoff = ex.get("signoff", "")
             body = ex.get("clean_body", "")
@@ -509,17 +509,17 @@ Use the reference emails ONLY to match tone, cadence, greeting, and sign-off. NE
             target_audience_mode = "broadcast_bcc"
 
         if context is not None:
-            # The deterministic resolver already filtered examples by audience.
-            examples = list(context.get("examples") or [])
+            # The deterministic resolver already filtered examples by audience; cap prompt examples at top 3.
+            examples = list(context.get("examples") or [])[:3]
         else:
             examples = self.vector_store.retrieve_few_shot_examples(
                 embedder=self.embedder,
                 recipient_email=recipient_email,
                 recipient_domain=recipient_domain,
                 query_text=query_text,
-                k=2,
+                k=5,
                 target_audience_mode=target_audience_mode,
-            )
+            )[:3]
 
         # Build prompts with audience topology
         system_prompt = self._build_system_prompt(

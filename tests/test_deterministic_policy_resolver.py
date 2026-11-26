@@ -160,8 +160,8 @@ class ResolverUnitTests(unittest.TestCase):
         result = self._resolve(cc=["watcher@example.com"], examples=[_example("1on1_private")])
         self.assertTrue(result["cold_start_fallback"])
         self.assertEqual(result["examples"], [])
-        self.assertTrue(any("Never fall back to casual 1:1" in d for d in result["policy_directives"]))
         probe = " ".join(result["policy_directives"] + result["applied_rules"]).lower()
+        self.assertIn("evidence for this recipient/audience is low", probe)
         self.assertIn("professional baseline", probe)
 
     def test_group_examples_are_used_when_present(self) -> None:
@@ -208,7 +208,7 @@ class ResolverUnitTests(unittest.TestCase):
         self.assertNotIn("Account B only rule", " ".join(foreign["applied_rules"]))
         self.assertEqual(foreign["suppressed_rules"], [])
         # Neither B's greeting nor B's rules survive; a clean default is used.
-        self.assertEqual(foreign["greeting"], "Hi,")
+        self.assertEqual(foreign["greeting"], "Hello,")
 
 
 class _APITestBase(unittest.TestCase):

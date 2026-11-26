@@ -1,4 +1,4 @@
-import { Check, ChevronsUpDown, LogOut, MessageSquarePlus, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Search, Trash2, UserRound, X } from 'lucide-react'
+import { Check, ChevronsUpDown, Inbox, LogOut, MessageSquare, MessageSquarePlus, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Pin, PinOff, Plus, RefreshCw, Search, Trash2, UserRound, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { ConnectGmailModal } from '@/components/auth/ConnectGmailModal'
 import { Avatar } from '@/components/ui/Avatar'
@@ -52,10 +52,19 @@ export function SessionRail({ collapsed, onToggleCollapsed, fullscreen = false, 
   const drafts = useDraftState((state) => state.drafts)
   const setProfileOpen = useWorkspaceUI((state) => state.setProfileOpen)
   const setPaletteOpen = useWorkspaceUI((state) => state.setPaletteOpen)
+  const railMode = useWorkspaceUI((state) => state.railMode)
+  const setRailMode = useWorkspaceUI((state) => state.setRailMode)
+  const inboxThreads = useAppStore((state) => state.inboxThreads)
+  const inboxLoading = useAppStore((state) => state.inboxLoading)
+  const inboxError = useAppStore((state) => state.inboxError)
+  const selectedThreadId = useAppStore((state) => state.selectedThreadId)
+  const loadInboxThreads = useAppStore((state) => state.loadInboxThreads)
+  const selectInboxThread = useAppStore((state) => state.selectInboxThread)
   const pushToast = useToastStore((state) => state.push)
   const dismissToast = useToastStore((state) => state.dismiss)
 
   const [searchQuery, setSearchQuery] = useState('')
+  const [inboxQuery, setInboxQuery] = useState('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [menuId, setMenuId] = useState<string | null>(null)
@@ -343,13 +352,37 @@ export function SessionRail({ collapsed, onToggleCollapsed, fullscreen = false, 
     )
   }
 
+  const filteredInboxThreads = useMemo(() => {
+    if (!inboxQuery.trim()) return inboxThreads
+    const q = inboxQuery.toLowerCase()
+    return inboxThreads.filter((t) =>
+      t.subject.toLowerCase().includes(q)
+      || t.latest_sender_name.toLowerCase().includes(q)
+      || t.latest_sender_email.toLowerCase().includes(q)
+      || t.snippet.toLowerCase().includes(q),
+    )
+  }, [inboxThreads, inboxQuery])
+
+  const handleModeSwitch = useCallback((mode: 'compose' | 'inbox') => {
+    setRailMode(mode)
+    if (mode === 'inbox' && inboxThreads.length === 0 && !inboxLoading) {
+      void loadInboxThreads()
+    }
+  }, [setRailMode, inboxThreads.length, inboxLoading, loadInboxThreads])
+
   /* ── Collapsed 56px icon rail ─────────────────────────────────────────── */
   if (collapsed && !fullscreen) {
     return (
       <aside className="flex h-full w-14 shrink-0 flex-col items-center border-r border-hairline bg-cobalt-deep py-3" aria-label="Session rail (collapsed)" data-tour="rail">
         <Wordmark to="/" size="sm" className="text-base" />
         <div className="mt-4 flex flex-col items-center gap-2">
-          <IconButton label="New session" shortcut="⌘N" onClick={() => void createSession()}>
+          <IconButton label="Compose mode" onClick={() => handleModeSwitch('compose')}>
+            <MessageSquare className={cn('h-4 w-4', railMode === 'compose' && 'text-foam')} />
+          </IconButton>
+          <IconButton label="Inbox mode" onClick={() => handleModeSwitch('inbox')}>
+            <Inbox className={cn('h-4 w-4', railMode === 'inbox' && 'text-foam')} />
+          </IconButton>
+          <IconButton label="New session" shortcut="⌘N" onClick={() => { handleModeSwitch('compose'); void createSession() }}>
             <MessageSquarePlus className="h-4 w-4" />
           </IconButton>
           <IconButton label="Search sessions" shortcut="⌘K" onClick={() => setPaletteOpen(true)}>
@@ -397,50 +430,163 @@ export function SessionRail({ collapsed, onToggleCollapsed, fullscreen = false, 
       </div>
 
       <div className="px-3 pt-3">
-        <button
-          type="button"
-          onClick={() => { void createSession(); onClose?.() }}
-          className="flex w-full items-center justify-center gap-2 rounded-pill bg-paper px-4 py-2 text-[13px] font-medium text-ink transition-colors hover:bg-foam"
-        >
-          <MessageSquarePlus className="h-4 w-4" aria-hidden /> New session
-        </button>
-        <div className="relative mt-2.5 flex items-center">
-          <Search className="pointer-events-none absolute left-3 h-3.5 w-3.5 text-paper-muted" aria-hidden />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search sessions"
-            aria-label="Search sessions"
-            className="w-full rounded-pill border border-hairline bg-cobalt py-2 pl-9 pr-3 text-[12px] text-paper placeholder:text-paper-muted focus:border-foam/70 focus:outline-none"
-          />
-          {searchQuery ? (
-            <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search" className="absolute right-3 text-paper-muted hover:text-paper">
-              <X className="h-3 w-3" />
-            </button>
-          ) : null}
+        {/* Mode segmented toggle: Compose | Inbox */}
+        <div className="mb-2.5 grid grid-cols-2 rounded-pill border border-hairline bg-cobalt p-0.5" role="tablist" aria-label="Workspace mode">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={railMode === 'compose'}
+            onClick={() => handleModeSwitch('compose')}
+            className={cn(
+              'flex items-center justify-center gap-1.5 rounded-pill py-1.5 text-[12px] font-medium transition-colors',
+              railMode === 'compose' ? 'bg-paper text-ink' : 'text-paper-muted hover:text-paper',
+            )}
+          >
+            <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+            Compose
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={railMode === 'inbox'}
+            onClick={() => handleModeSwitch('inbox')}
+            className={cn(
+              'flex items-center justify-center gap-1.5 rounded-pill py-1.5 text-[12px] font-medium transition-colors',
+              railMode === 'inbox' ? 'bg-paper text-ink' : 'text-paper-muted hover:text-paper',
+            )}
+          >
+            <Inbox className="h-3.5 w-3.5" aria-hidden />
+            Inbox
+          </button>
         </div>
-      </div>
 
-      <nav ref={navRef} onKeyDown={handleNavKeyDown} className="scrollbar-none mt-3 flex-1 overflow-y-auto px-2 pb-3" aria-label="Session history">
-        {flatVisible.length === 0 ? (
-          <p className="px-3 py-6 text-center text-[12px] text-paper-muted">{searchQuery ? 'No matching sessions' : 'No sessions yet'}</p>
-        ) : grouped.map((group) => (
-          <div key={group.name} className="mb-3">
+        {railMode === 'compose' ? (
+          <>
             <button
               type="button"
-              onClick={() => setCollapsedGroups((current) => ({ ...current, [group.name]: !current[group.name] }))}
-              aria-expanded={!collapsedGroups[group.name]}
-              className="flex w-full items-center gap-1.5 px-2.5 pb-1.5 font-mono text-[12px] uppercase tracking-[0.14em] text-paper-muted hover:text-paper"
+              onClick={() => { void createSession(); onClose?.() }}
+              className="flex w-full items-center justify-center gap-2 rounded-pill bg-paper px-4 py-2 text-[13px] font-medium text-ink transition-colors hover:bg-foam"
             >
-              {group.name === 'Pinned' ? <Pin className="h-3 w-3" aria-hidden /> : null}
-              {group.name}
-              <span className={cn('ml-auto transition-transform', collapsedGroups[group.name] && '-rotate-90')} aria-hidden>▾</span>
+              <MessageSquarePlus className="h-4 w-4" aria-hidden /> New session
             </button>
-            {!collapsedGroups[group.name] ? <ul className="space-y-0.5">{group.items.map(renderRow)}</ul> : null}
+            <div className="relative mt-2.5 flex items-center">
+              <Search className="pointer-events-none absolute left-3 h-3.5 w-3.5 text-paper-muted" aria-hidden />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search sessions"
+                aria-label="Search sessions"
+                className="w-full rounded-pill border border-hairline bg-cobalt py-2 pl-9 pr-3 text-[12px] text-paper placeholder:text-paper-muted focus:border-foam/70 focus:outline-none"
+              />
+              {searchQuery ? (
+                <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search" className="absolute right-3 text-paper-muted hover:text-paper">
+                  <X className="h-3 w-3" />
+                </button>
+              ) : null}
+            </div>
+          </>
+        ) : (
+          <div className="flex items-center gap-1.5">
+            <div className="relative flex min-w-0 flex-1 items-center">
+              <Search className="pointer-events-none absolute left-3 h-3.5 w-3.5 text-paper-muted" aria-hidden />
+              <input
+                type="text"
+                value={inboxQuery}
+                onChange={(event) => setInboxQuery(event.target.value)}
+                placeholder="Search inbox"
+                aria-label="Search inbox"
+                className="w-full rounded-pill border border-hairline bg-cobalt py-2 pl-9 pr-3 text-[12px] text-paper placeholder:text-paper-muted focus:border-foam/70 focus:outline-none"
+              />
+              {inboxQuery ? (
+                <button type="button" onClick={() => setInboxQuery('')} aria-label="Clear inbox search" className="absolute right-3 text-paper-muted hover:text-paper">
+                  <X className="h-3 w-3" />
+                </button>
+              ) : null}
+            </div>
+            <IconButton label="Refresh inbox" onClick={() => void loadInboxThreads()}>
+              <RefreshCw className={cn('h-4 w-4', inboxLoading && 'animate-spin')} />
+            </IconButton>
           </div>
-        ))}
-      </nav>
+        )}
+      </div>
+
+      {railMode === 'compose' ? (
+        <nav ref={navRef} onKeyDown={handleNavKeyDown} className="scrollbar-none mt-3 flex-1 overflow-y-auto px-2 pb-3" aria-label="Session history">
+          {flatVisible.length === 0 ? (
+            <p className="px-3 py-6 text-center text-[12px] text-paper-muted">{searchQuery ? 'No matching sessions' : 'No sessions yet'}</p>
+          ) : grouped.map((group) => (
+            <div key={group.name} className="mb-3">
+              <button
+                type="button"
+                onClick={() => setCollapsedGroups((current) => ({ ...current, [group.name]: !current[group.name] }))}
+                aria-expanded={!collapsedGroups[group.name]}
+                className="flex w-full items-center gap-1.5 px-2.5 pb-1.5 font-mono text-[12px] uppercase tracking-[0.14em] text-paper-muted hover:text-paper"
+              >
+                {group.name === 'Pinned' ? <Pin className="h-3 w-3" aria-hidden /> : null}
+                {group.name}
+                <span className={cn('ml-auto transition-transform', collapsedGroups[group.name] && '-rotate-90')} aria-hidden>▾</span>
+              </button>
+              {!collapsedGroups[group.name] ? <ul className="space-y-0.5">{group.items.map(renderRow)}</ul> : null}
+            </div>
+          ))}
+        </nav>
+      ) : (
+        <nav className="scrollbar-none mt-3 flex-1 overflow-y-auto px-2 pb-3" aria-label="Inbox threads">
+          {inboxLoading && inboxThreads.length === 0 ? (
+            <p className="px-3 py-6 text-center text-[12px] text-paper-muted">Fetching inbox…</p>
+          ) : inboxError && inboxThreads.length === 0 ? (
+            <div className="px-3 py-5 text-center">
+              <p className="text-[12px] leading-relaxed text-paper-muted">{inboxError}</p>
+              <button
+                type="button"
+                onClick={() => void loadInboxThreads()}
+                className="mt-2.5 rounded-pill border border-hairline px-3 py-1 text-[12px] text-foam hover:border-foam"
+              >
+                Retry
+              </button>
+            </div>
+          ) : filteredInboxThreads.length === 0 ? (
+            <p className="px-3 py-6 text-center text-[12px] text-paper-muted">
+              {inboxQuery ? 'No matching threads' : 'No inbox threads found'}
+            </p>
+          ) : (
+            <ul className="space-y-0.5">
+              {filteredInboxThreads.map((thread) => {
+                const isSelected = thread.thread_id === selectedThreadId
+                const senderLabel = thread.latest_sender_name || friendlyName(thread.latest_sender_email || 'Unknown')
+                return (
+                  <li key={thread.thread_id}>
+                    <button
+                      type="button"
+                      onClick={() => { void selectInboxThread(thread.thread_id); onClose?.() }}
+                      className={cn(
+                        'w-full rounded-card px-2.5 py-2 text-left transition-colors',
+                        isSelected ? 'bg-paper/10' : 'hover:bg-paper/[0.06]',
+                      )}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-paper">
+                          {senderLabel} — {thread.subject}
+                        </span>
+                        {thread.unread ? (
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-pill bg-foam" aria-label="Unread" />
+                        ) : null}
+                      </span>
+                      <span className="mt-1 flex items-center gap-1.5 font-mono text-[12px] text-paper-muted">
+                        <span className="truncate">
+                          {thread.message_count} msg{thread.message_count === 1 ? '' : 's'}
+                          {thread.last_message_at ? ` · ${formatRelativeTime(thread.last_message_at)}` : ''}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </nav>
+      )}
 
       {/* Style Profile row — real stats, never a fake percentage. */}
       <div className="border-t border-hairline px-3 pt-2.5">

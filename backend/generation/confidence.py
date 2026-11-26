@@ -70,7 +70,8 @@ def _extract_similarity(example: dict[str, Any]) -> float:
     dist = example.get("_distance")
     if dist is not None:
         try:
-            return max(0.0, min(1.0, 1.0 - float(dist)))
+            # LanceDB returns squared L2 distance (l2_sq = 2 * (1 - cos_sim)) for unit vectors.
+            return max(0.0, min(1.0, 1.0 - (float(dist) / 2.0)))
         except (TypeError, ValueError):
             pass
     # Synthetic examples without explicit score fields default to usable.

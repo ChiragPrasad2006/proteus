@@ -113,6 +113,7 @@ Retire any conflicting older rule when adding a new one."""
             body=request.final_body,
             thread_id=request_data.get("thread_id"),
             in_reply_to=request_data.get("in_reply_to"),
+            references=list(request_data.get("references") or []),
         )
 
         try:

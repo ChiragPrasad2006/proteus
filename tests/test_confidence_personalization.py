@@ -181,3 +181,21 @@ def test_account_isolation() -> None:
     assert conf["level"] == "low"
     assert conf["signals"]["audience_matched_count"] == 0
     assert conf["signals"]["usable_example_count"] == 0
+
+
+def test_squared_l2_distance_maps_accurately_to_cosine_similarity() -> None:
+    # For unit-normalized vectors, LanceDB L2^2 = 0.80 => cos_sim = 1 - 0.80/2 = 0.60 (>= high_min_similarity 0.55)
+    examples = [
+        {
+            "message_id": f"l2-{i}",
+            "recipient_email": "alex@example.com",
+            "audience_mode": "1on1_private",
+            "_distance": 0.80,
+            "timestamp": _iso_days_ago(5.0),
+            "account_id": "acct-a",
+        }
+        for i in range(3)
+    ]
+    conf = assess_personalization_confidence(examples, "1on1_private", account_id="acct-a")
+    assert conf["level"] == "high"
+    assert conf["signals"]["avg_similarity"] == 0.6

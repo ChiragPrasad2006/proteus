@@ -1,15 +1,18 @@
-"""Google Gmail desktop-loopback Sent-mail connector with outbound send support."""
+"""Google Gmail desktop-loopback Sent-mail & read-only Inbox connector with outbound send support."""
 
 from __future__ import annotations
 
 import base64
 import json
+import re
 from datetime import datetime, timezone
 from email.message import EmailMessage
+from email.utils import getaddresses, make_msgid
 from pathlib import Path
 from typing import Any
 
 from backend.connectors.base import BaseEmailConnector, ConnectorError
+from backend.connectors.imap_mbox import html_to_plain_text
 from backend.schemas import OutboundEmailRequest, RawSentEmail, SendReceipt
 
 # --- OAuth2 scope sets -----------------------------------------------------
@@ -41,7 +44,7 @@ def _header(headers: list[dict[str, str]], name: str) -> str:
 def _body_from_payload(payload: dict[str, Any]) -> str:
     """Recursively prefer text/plain MIME parts, falling back to HTML."""
     plain: list[str] = []
-    html: list[str] = []
+    html_parts: list[str] = []
 
     def visit(part: dict[str, Any]) -> None:
         data = part.get("body", {}).get("data")
@@ -50,26 +53,47 @@ def _body_from_payload(payload: dict[str, Any]) -> str:
             decoded = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4)).decode(
                 "utf-8", errors="replace"
             )
-            (plain if mime_type == "text/plain" else html).append(decoded)
+            (plain if mime_type == "text/plain" else html_parts).append(decoded)
         for child in part.get("parts", []) or []:
             visit(child)
 
     visit(payload)
-    return "\n".join(plain or html)
+    if plain:
+        return "\n".join(plain).strip()
+    if html_parts:
+        return html_to_plain_text("\n".join(html_parts))
+    return ""
+
+
+def _parse_addr_list(header_val: str) -> list[str]:
+    return [addr.strip().lower() for _, addr in getaddresses([header_val or ""]) if addr and "@" in addr]
+
+
+def _parse_references(header_val: str) -> list[str]:
+    if not header_val:
+        return []
+    bracketed = re.findall(r"<[^>\s]+>", header_val)
+    return bracketed if bracketed else [tok.strip() for tok in header_val.split() if tok.strip()]
 
 
 class GmailConnector(BaseEmailConnector):
-    """Reads Gmail ``in:sent`` mail and sends mail via Google's OAuth2 desktop flow.
-
-    The landing-page identity flow passes only standard OpenID/userinfo scopes.
-    Gmail mailbox access is intentionally handled separately through the local
-    IMAP/SMTP App Password connector.
-    """
+    """Reads Gmail ``in:sent`` / INBOX threads and sends mail via Google's OAuth2 desktop flow."""
 
     def __init__(self, client_secrets_file: Path, token_file: Path, scopes: list[str] | None = None) -> None:
         self.client_secrets_file = Path(client_secrets_file)
         self.token_file = Path(token_file)
         self.scopes = list(scopes) if scopes else list(GOOGLE_IDENTITY_SCOPES)
+
+    def has_readonly_scope(self) -> bool:
+        """Check whether stored token includes gmail.readonly."""
+        if not self.token_file.exists():
+            return False
+        try:
+            token_data = json.loads(self.token_file.read_text(encoding="utf-8"))
+            stored = token_data.get("scopes") or token_data.get("granted_scopes") or self.scopes
+            return GMAIL_READONLY_SCOPE in (stored or [])
+        except (OSError, json.JSONDecodeError):
+            return False
 
     # --- OAuth2 desktop flow -------------------------------------------------
     def create_flow(self, redirect_uri: str | None = None, scopes: list[str] | None = None):
@@ -87,8 +111,6 @@ class GmailConnector(BaseEmailConnector):
             scopes=scopes or self.scopes,
             redirect_uri=redirect_uri,
         )
-        # Enable PKCE when the installed google-auth-oauthlib supports it (required by
-        # Google for the "Desktop app" client type). Safe no-op on older versions.
         try:
             flow.autogenerate_code_verifier = True  # type: ignore[attr-defined]
         except Exception:
@@ -101,11 +123,6 @@ class GmailConnector(BaseEmailConnector):
         state: str | None = None,
         scopes: list[str] | None = None,
     ) -> tuple[Any, str, str]:
-        """Return ``(flow, authorization_url, state)`` for the consent redirect.
-
-        The caller must persist ``flow`` (or its PKCE verifier) until the callback
-        arrives so the authorization code can be exchanged with the matching verifier.
-        """
         flow = self.create_flow(redirect_uri=redirect_uri, scopes=scopes)
         url, returned_state = flow.authorization_url(
             access_type="offline",
@@ -116,7 +133,6 @@ class GmailConnector(BaseEmailConnector):
         return flow, url, returned_state
 
     def exchange_code(self, flow, code: str, redirect_uri: str | None = None):
-        """Exchange an authorization code for credentials using the original flow object."""
         if redirect_uri:
             try:
                 flow.redirect_uri = redirect_uri
@@ -129,7 +145,6 @@ class GmailConnector(BaseEmailConnector):
         return flow.credentials
 
     def fetch_user_info(self, credentials) -> dict[str, Any]:
-        """Fetch the OpenID Connect userinfo payload for the connected account."""
         import httpx
 
         token = getattr(credentials, "token", None)
@@ -147,14 +162,12 @@ class GmailConnector(BaseEmailConnector):
             raise ConnectorError(f"Failed to fetch Google user info: {exc}") from exc
 
     def save_credentials(self, credentials, token_file: Path | None = None) -> Path:
-        """Persist credentials to the token file for later refresh-based reuse."""
         path = Path(token_file or self.token_file)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(credentials.to_json(), encoding="utf-8")
         return path
 
     def _get_credentials(self, require_send: bool = False):
-        """Load stored credentials and require an explicit Gmail-send grant for API sends."""
         try:
             from google.auth.transport.requests import Request
             from google.oauth2.credentials import Credentials
@@ -196,15 +209,17 @@ class GmailConnector(BaseEmailConnector):
         self.token_file.write_text(credentials.to_json(), encoding="utf-8")
         return credentials
 
-    def fetch_sent_emails(self, limit: int) -> list[RawSentEmail]:
-        """Authorize locally, query ``in:sent``, and return normalized messages."""
-        credentials = self._get_credentials(require_send=False)
+    def _build_service(self, require_send: bool = False):
+        credentials = self._get_credentials(require_send=require_send)
         try:
             from googleapiclient.discovery import build
         except ImportError as exc:
-            raise ConnectorError("google-api-python-client is required for Gmail fetch.") from exc
+            raise ConnectorError("google-api-python-client is required for Gmail API access.") from exc
+        return build("gmail", "v1", credentials=credentials, cache_discovery=False)
 
-        service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
+    def fetch_sent_emails(self, limit: int) -> list[RawSentEmail]:
+        """Authorize locally, query ``in:sent``, and return normalized messages."""
+        service = self._build_service(require_send=False)
         listing = service.users().messages().list(
             userId="me", q="in:sent", maxResults=min(limit, 500)
         ).execute()
@@ -226,17 +241,103 @@ class GmailConnector(BaseEmailConnector):
             )
         return records
 
-    def send_email(self, payload: OutboundEmailRequest) -> SendReceipt:
-        """Send an email via Gmail API with proper MIME encoding."""
-        credentials = self._get_credentials(require_send=True)
+    @staticmethod
+    def _normalize_gmail_thread(thread_payload: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a Gmail API threads.get payload into summary + chronological messages."""
+        raw_msgs = thread_payload.get("messages", []) or []
+        raw_msgs_sorted = sorted(raw_msgs, key=lambda m: int(m.get("internalDate", "0")))
+        messages: list[dict[str, Any]] = []
+        participants: list[str] = []
+        unread = False
+
+        for m in raw_msgs_sorted:
+            headers = m.get("payload", {}).get("headers", [])
+            label_ids = m.get("labelIds") or []
+            if "UNREAD" in label_ids:
+                unread = True
+            from_hdr = _header(headers, "From")
+            from_pairs = getaddresses([from_hdr])
+            from_name = (from_pairs[0][0] if from_pairs else "").strip()
+            from_email = (from_pairs[0][1] if from_pairs else "").strip().lower()
+            to_list = _parse_addr_list(_header(headers, "To"))
+            cc_list = _parse_addr_list(_header(headers, "Cc"))
+            for addr in [from_email, *to_list, *cc_list]:
+                if addr and addr not in participants:
+                    participants.append(addr)
+
+            ts_ms = int(m.get("internalDate", "0") or 0)
+            date_iso = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).isoformat() if ts_ms else ""
+            body_text = _body_from_payload(m.get("payload", {})) or (m.get("snippet") or "")
+            messages.append(
+                {
+                    "message_id": _header(headers, "Message-ID") or m.get("id", ""),
+                    "from_name": from_name or (from_email.split("@")[0] if from_email else ""),
+                    "from_email": from_email,
+                    "to": to_list,
+                    "cc": cc_list,
+                    "date": date_iso,
+                    "subject": _header(headers, "Subject"),
+                    "body_text": body_text,
+                    "in_reply_to": _header(headers, "In-Reply-To").strip(),
+                    "references": _parse_references(_header(headers, "References")),
+                }
+            )
+
+        latest = messages[-1] if messages else {}
+        subject = next((m["subject"] for m in messages if m.get("subject")), "") or "(no subject)"
+        snippet = re.sub(r"\s+", " ", latest.get("body_text", "")).strip()[:160]
+        return {
+            "thread_id": str(thread_payload.get("id", "")),
+            "subject": subject,
+            "snippet": snippet,
+            "last_message_at": latest.get("date", ""),
+            "message_count": len(messages),
+            "participants": participants,
+            "unread": unread,
+            "latest_sender_name": latest.get("from_name", ""),
+            "latest_sender_email": latest.get("from_email", ""),
+            "messages": messages,
+        }
+
+    def fetch_inbox_threads(self, limit: int = 25) -> list[dict[str, Any]]:
+        """Read-only listing of INBOX threads via Gmail threads.list + threads.get."""
+        if not self.has_readonly_scope():
+            raise ConnectorError("Stored Gmail OAuth token lacks gmail.readonly scope.")
+        service = self._build_service(require_send=False)
+        listing = service.users().threads().list(
+            userId="me", labelIds=["INBOX"], maxResults=max(1, min(limit, 100))
+        ).execute()
+        threads: list[dict[str, Any]] = []
+        for item in listing.get("threads", []) or []:
+            detail = service.users().threads().get(userId="me", id=item["id"], format="full").execute()
+            normalized = self._normalize_gmail_thread(detail)
+            threads.append({k: v for k, v in normalized.items() if k != "messages"})
+        threads.sort(key=lambda t: t.get("last_message_at", ""), reverse=True)
+        return threads
+
+    def fetch_thread_messages(self, thread_id: str) -> dict[str, Any] | None:
+        """Read-only fetch of one Gmail INBOX thread via threads.get."""
+        if not self.has_readonly_scope():
+            raise ConnectorError("Stored Gmail OAuth token lacks gmail.readonly scope.")
+        service = self._build_service(require_send=False)
         try:
-            from googleapiclient.discovery import build
-        except ImportError as exc:
-            raise ConnectorError("google-api-python-client is required for Gmail send.") from exc
+            detail = service.users().threads().get(userId="me", id=thread_id, format="full").execute()
+        except Exception as exc:
+            if "404" in str(exc):
+                return None
+            raise ConnectorError(f"Unable to fetch Gmail thread '{thread_id}': {exc}") from exc
+        normalized = self._normalize_gmail_thread(detail)
+        return {
+            "thread_id": normalized["thread_id"],
+            "subject": normalized["subject"],
+            "participants": normalized["participants"],
+            "messages": normalized["messages"],
+        }
 
-        service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
+    def send_email(self, payload: OutboundEmailRequest) -> SendReceipt:
+        """Send an email via Gmail API with proper MIME encoding and reply headers."""
+        service = self._build_service(require_send=True)
 
-        # Build MIME message
         msg = EmailMessage()
         msg["To"] = ", ".join(payload.to)
         if payload.cc:
@@ -244,20 +345,26 @@ class GmailConnector(BaseEmailConnector):
         if payload.bcc:
             msg["Bcc"] = ", ".join(payload.bcc)
         msg["Subject"] = payload.subject
-        if payload.thread_id:
-            msg["In-Reply-To"] = payload.thread_id
-            msg["References"] = payload.thread_id
+        msg["Message-ID"] = make_msgid()
         if payload.in_reply_to:
             msg["In-Reply-To"] = payload.in_reply_to
+        elif payload.thread_id and str(payload.thread_id).startswith("<"):
+            msg["In-Reply-To"] = payload.thread_id
+        if payload.references:
+            msg["References"] = " ".join(payload.references)
+        elif payload.thread_id and str(payload.thread_id).startswith("<"):
+            msg["References"] = payload.thread_id
+        elif payload.in_reply_to:
+            msg["References"] = payload.in_reply_to
 
         msg.set_content(payload.body, subtype="plain")
 
-        # Handle attachments if any
         for attachment_path in payload.attachments:
             try:
                 with open(attachment_path, "rb") as f:
                     data = f.read()
                 import mimetypes
+
                 mimetype, _ = mimetypes.guess_type(attachment_path)
                 if mimetype is None:
                     mimetype = "application/octet-stream"
@@ -266,10 +373,9 @@ class GmailConnector(BaseEmailConnector):
             except Exception as exc:
                 raise ConnectorError(f"Failed to attach {attachment_path}: {exc}") from exc
 
-        # Encode and send
         raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
-        body = {"raw": raw}
-        if payload.thread_id:
+        body: dict[str, Any] = {"raw": raw}
+        if payload.thread_id and not str(payload.thread_id).startswith("imap_"):
             body["threadId"] = payload.thread_id
 
         try:
@@ -285,28 +391,3 @@ class GmailConnector(BaseEmailConnector):
                 status="failed",
                 error=str(exc),
             )
-
-
-def _header(headers: list[dict[str, str]], name: str) -> str:
-    """Read a case-insensitive Gmail message header."""
-    return next((item.get("value", "") for item in headers if item.get("name", "").lower() == name.lower()), "")
-
-
-def _body_from_payload(payload: dict[str, Any]) -> str:
-    """Recursively prefer text/plain MIME parts, falling back to HTML."""
-    plain: list[str] = []
-    html: list[str] = []
-
-    def visit(part: dict[str, Any]) -> None:
-        data = part.get("body", {}).get("data")
-        mime_type = part.get("mimeType", "")
-        if data:
-            decoded = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4)).decode(
-                "utf-8", errors="replace"
-            )
-            (plain if mime_type == "text/plain" else html).append(decoded)
-        for child in part.get("parts", []) or []:
-            visit(child)
-
-    visit(payload)
-    return "\n".join(plain or html)

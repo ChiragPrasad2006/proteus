@@ -16,7 +16,7 @@ from typing import Annotated, Any, cast
 from urllib.parse import unquote
 
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -44,7 +44,7 @@ from backend.generation import (
     classify_audience,
     resolve_draft_context,
 )
-from backend.connectors.gmail_connector import GMAIL_SEND_SCOPE
+from backend.connectors.gmail_connector import GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE
 from backend.processing import clean_raw_email, compute_stylometry
 from backend.profiler import ProfilerUnavailable, QwenStyleProfiler
 from backend.retrieval import LanceDBVectorStore, LocalEmbedder
@@ -67,6 +67,8 @@ from backend.schemas import (
     DraftRequest,
     DraftResponse,
     DraftDeleteResponse,
+    DraftReplyRequest,
+    DraftReplyResponse,
     DraftTweakRequest,
     DraftTweakResponse,
     DraftUpdateRequest,
@@ -75,6 +77,10 @@ from backend.schemas import (
     GoogleOAuthCredentialsStatus,
     GoogleOAuthCredentialsUpload,
     IdentityLoginRequest,
+    InboxThreadDetailResponse,
+    InboxThreadListResponse,
+    InboxThreadMessage,
+    InboxThreadSummary,
     ConnectAppPasswordRequest,
     MailboxConnectResponse,
     OnboardingRequest,
@@ -760,7 +766,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store: ProfileStore,
         query_text: str = "",
         current_instructions: str = "",
-        k: int = 2,
+        k: int = 5,
     ) -> dict[str, Any]:
         """Run the deterministic policy layer before any model call."""
         recipient_profiles: dict[str, dict[str, Any]] = {}
@@ -839,6 +845,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
         raise ConnectorError(
             "This OAuth token lacks gmail.send and no App Password is saved. Unlock the mailbox with a Gmail App Password before sending."
+        )
+
+    def _inbox_connector_for_account(acc_settings: Settings):
+        """Return a read-only inbox connector (Gmail REST with gmail.readonly, else IMAP BODY.PEEK[])."""
+        account = account_manager.get_account(acc_settings.local_user_data_dir.name)
+        if account is None:
+            raise ConnectorError("The selected account is not registered.")
+
+        token_candidates = (
+            acc_settings.oauth_token_dir / "google_identity.json",
+            acc_settings.oauth_token_dir / "gmail_token.json",
+        )
+        for token_file in token_candidates:
+            if not token_file.is_file():
+                continue
+            try:
+                token_data = json.loads(token_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            scopes = token_data.get("scopes") or token_data.get("granted_scopes") or []
+            if isinstance(scopes, list) and GMAIL_READONLY_SCOPE in scopes:
+                return GmailConnector(
+                    acc_settings.google_client_secrets_file,
+                    token_file,
+                    scopes=[scope for scope in scopes if isinstance(scope, str)],
+                )
+
+        app_password_file = acc_settings.local_user_data_dir / "app_password.bin"
+        if app_password_file.is_file():
+            try:
+                app_password = reveal_secret(
+                    app_password_file.read_text(encoding="utf-8"),
+                    acc_settings.local_user_data_dir,
+                )
+                if len(app_password) == 16:
+                    return GmailAppPasswordConnector(account.email, app_password)
+            except Exception as exc:
+                raise ConnectorError("The saved Gmail App Password could not be opened; reconnect the mailbox.") from exc
+
+        raise ConnectorError(
+            "Inbox access requires gmail.readonly OAuth scope or an unlocked Gmail App Password."
         )
 
     def _revise_staged_draft(
@@ -1551,7 +1598,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         clean_examples = [
             {k: v for k, v in ex.items() if k in RetrievedExample.model_fields}
-            for ex in context["examples"]
+            for ex in context["examples"][:3]
         ]
 
         return DraftResponse(
@@ -1676,6 +1723,303 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             connector_factory=lambda: _connector_for_account(acc_settings),
         )
         return learner.approve_and_learn(request)
+
+    # --- Read-only Inbox threads & manual thread-aware reply drafting -------
+    def _build_incoming_thread_context(messages: list[dict[str, Any]], max_chars: int = 2200) -> str:
+        """Build a concise chronological thread digest bounded for the 4096-token window."""
+        if not messages:
+            return ""
+        tail = messages[-5:]
+        chunks: list[str] = []
+        for msg in tail:
+            sender = msg.get("from_name") or msg.get("from_email") or "Unknown"
+            sender_email = msg.get("from_email") or ""
+            date_str = msg.get("date") or ""
+            body = re.sub(r"\n{3,}", "\n\n", (msg.get("body_text") or "").strip())
+            if len(body) > 550:
+                body = body[:550].rstrip() + "..."
+            header_line = f"From: {sender} <{sender_email}>" if sender_email else f"From: {sender}"
+            if date_str:
+                header_line += f" | Date: {date_str}"
+            chunks.append(f"{header_line}\n{body}")
+        joined = "\n\n---\n\n".join(chunks)
+        if len(joined) > max_chars:
+            joined = "...\n" + joined[-max_chars:]
+        return joined
+
+    def _resolve_reply_targets(
+        messages: list[dict[str, Any]],
+        thread_subject: str,
+        self_email: str,
+        reply_mode: str,
+    ) -> dict[str, Any]:
+        """Compute To, Cc, Subject, In-Reply-To, and References for a manual reply."""
+        self_norm = (self_email or "").strip().lower()
+        latest_msg = messages[-1]
+        latest_external = next(
+            (m for m in reversed(messages) if (m.get("from_email") or "").strip().lower() != self_norm),
+            latest_msg,
+        )
+
+        def _dedup(addrs: list[str], exclude: set[str]) -> list[str]:
+            out: list[str] = []
+            for addr in addrs:
+                clean = str(addr or "").strip().lower()
+                if clean and "@" in clean and clean not in exclude and clean not in out:
+                    out.append(clean)
+            return out
+
+        sender_email = (latest_external.get("from_email") or "").strip().lower()
+        exclude_self = {self_norm} if self_norm else set()
+
+        if reply_mode == "reply_all":
+            to_candidates = ([sender_email] if sender_email and sender_email != self_norm else []) + list(
+                latest_external.get("to") or []
+            )
+            to_emails = _dedup(to_candidates, exclude_self)
+            cc_emails = _dedup(list(latest_external.get("cc") or []), exclude_self | set(to_emails))
+        else:
+            to_emails = _dedup([sender_email] if sender_email else list(latest_external.get("to") or []), exclude_self)
+            cc_emails = []
+
+        if not to_emails:
+            fallback_addrs: list[str] = []
+            for m in reversed(messages):
+                fallback_addrs.extend([m.get("from_email", ""), *(m.get("to") or [])])
+            to_emails = _dedup(fallback_addrs, exclude_self)[:1]
+
+        in_reply_to = str(latest_external.get("message_id") or latest_msg.get("message_id") or "").strip()
+        existing_refs = [str(r).strip() for r in (latest_external.get("references") or []) if str(r).strip()]
+        references: list[str] = []
+        for ref in [*existing_refs, in_reply_to]:
+            if ref and ref not in references:
+                references.append(ref)
+
+        base_subject = (thread_subject or latest_external.get("subject") or "").strip()
+        if base_subject.lower().startswith("re:"):
+            reply_subject = base_subject
+        elif base_subject:
+            reply_subject = f"Re: {base_subject}"
+        else:
+            reply_subject = "Re:"
+
+        return {
+            "latest_external": latest_external,
+            "to": to_emails,
+            "cc": cc_emails,
+            "subject": reply_subject,
+            "in_reply_to": in_reply_to,
+            "references": references,
+        }
+
+    @app.get("/api/inbox/threads", response_model=InboxThreadListResponse)
+    def list_inbox_threads(
+        limit: int = Query(default=25, ge=1, le=100),
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> InboxThreadListResponse:
+        """Read-only fetch of recent INBOX threads scoped to X-Account-ID."""
+        account, acc_settings = ctx
+        if account is None:
+            raise HTTPException(status_code=400, detail="X-Account-ID header is required.")
+        try:
+            connector = _inbox_connector_for_account(acc_settings)
+            raw_threads = connector.fetch_inbox_threads(limit=limit)
+        except ConnectorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Unable to fetch inbox threads: {exc}") from exc
+        return InboxThreadListResponse(
+            threads=[InboxThreadSummary(**t) for t in raw_threads]
+        )
+
+    @app.get("/api/inbox/threads/{thread_id}", response_model=InboxThreadDetailResponse)
+    def get_inbox_thread(
+        thread_id: str,
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> InboxThreadDetailResponse:
+        """Read-only fetch of full chronological messages in one INBOX thread."""
+        account, acc_settings = ctx
+        if account is None:
+            raise HTTPException(status_code=400, detail="X-Account-ID header is required.")
+        try:
+            connector = _inbox_connector_for_account(acc_settings)
+            detail = connector.fetch_thread_messages(thread_id)
+        except ConnectorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Unable to fetch inbox thread: {exc}") from exc
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"Inbox thread '{thread_id}' not found.")
+        return InboxThreadDetailResponse(
+            thread_id=detail["thread_id"],
+            subject=detail.get("subject", ""),
+            participants=detail.get("participants", []),
+            messages=[InboxThreadMessage(**m) for m in detail.get("messages", [])],
+        )
+
+    @app.post("/api/inbox/threads/{thread_id}/draft-reply", response_model=DraftReplyResponse)
+    def draft_inbox_reply(
+        thread_id: str,
+        request: DraftReplyRequest,
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> DraftReplyResponse:
+        """Generate a manual, personalized reply for an opened thread and stage as PENDING_REVIEW."""
+        account, acc_settings = ctx
+        if account is None:
+            raise HTTPException(status_code=400, detail="X-Account-ID header is required.")
+
+        store = ProfileStore(acc_settings)
+        profile = store.load_profile()
+        if profile is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No style profile has been built yet. Complete mailbox onboarding first.",
+            )
+
+        try:
+            connector = _inbox_connector_for_account(acc_settings)
+            detail = connector.fetch_thread_messages(thread_id)
+        except ConnectorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Unable to load inbox thread: {exc}") from exc
+
+        if detail is None or not detail.get("messages"):
+            raise HTTPException(status_code=404, detail=f"Inbox thread '{thread_id}' not found.")
+
+        messages = detail["messages"]
+        resolved = _resolve_reply_targets(
+            messages=messages,
+            thread_subject=detail.get("subject", ""),
+            self_email=account.email,
+            reply_mode=request.reply_mode,
+        )
+        to_emails: list[str] = resolved["to"]
+        cc_emails: list[str] = resolved["cc"]
+        if not to_emails:
+            raise HTTPException(status_code=422, detail="Could not resolve an external recipient to reply to.")
+
+        latest_ext = resolved["latest_external"]
+        incoming_context = _build_incoming_thread_context(messages)
+        instruction = (request.instruction or "").strip()
+        intent_bullets = (
+            instruction
+            if instruction
+            else f"Write a concise, helpful reply to {latest_ext.get('from_name') or to_emails[0]} addressing their latest message."
+        )
+        query_text = " ".join(
+            part for part in (detail.get("subject", ""), (latest_ext.get("body_text") or "")[:600], instruction) if part
+        ).strip()
+
+        resolution_context = _build_resolution_context(
+            acc_settings,
+            _resolution_account_id(account, acc_settings),
+            to_emails,
+            cc_emails,
+            [],
+            store,
+            query_text=query_text,
+            current_instructions=instruction,
+            k=5,
+        )
+        audience_type = str(resolution_context["audience_type"])
+        resolution_meta = dict(resolution_context["resolution_meta"])
+
+        recipient_profiles_objs: dict[str, Any] = {}
+        recipient_profiles_data: dict[str, Any] = {}
+        for email_addr in to_emails + cc_emails:
+            rp = store.get_recipient_profile(email_addr)
+            if rp is not None:
+                recipient_profiles_objs[email_addr.lower()] = rp
+                recipient_profiles_data[email_addr.lower()] = rp.model_dump(mode="json")
+
+        review_reasons = ["manual review required before sending thread reply"]
+        try:
+            draft_body = QwenDrafter(acc_settings).generate_draft(
+                profile=profile,
+                cleaned_emails=store.load_cleaned_emails(),
+                intent_bullets=intent_bullets,
+                recipient_email=to_emails[0],
+                incoming_context=incoming_context,
+                cc_recipients=cc_emails,
+                bcc_recipients=[],
+                recipient_profiles=recipient_profiles_objs,
+                context=resolution_context,
+            )
+        except DrafterUnavailable as exc:
+            review_reasons.append(f"drafting model unavailable ({exc})")
+            draft_body = _fallback_draft(profile, _first_name_from_email(to_emails[0]), intent_bullets)
+
+        draft_id = str(uuid.uuid4())
+        request_payload = {
+            "to": to_emails,
+            "cc": cc_emails,
+            "bcc": [],
+            "subject": resolved["subject"],
+            "intent_bullets": intent_bullets,
+            "provider": account.provider,
+            "thread_id": thread_id,
+            "in_reply_to": resolved["in_reply_to"],
+            "references": resolved["references"],
+            "reply_mode": request.reply_mode,
+            "audience_type": audience_type,
+            "resolution_meta": resolution_meta,
+        }
+        with sqlite3.connect(acc_settings.sqlite_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO pending_drafts (
+                    draft_id, profile_id, request_json, draft, created_at,
+                    recipient_profiles_json, audience_type, resolution_meta_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    draft_id,
+                    profile.profile_id,
+                    json.dumps(request_payload),
+                    draft_body,
+                    datetime.now(timezone.utc).isoformat(),
+                    json.dumps(recipient_profiles_data),
+                    audience_type,
+                    json.dumps(resolution_meta),
+                ),
+            )
+
+        clean_examples = [
+            {k: v for k, v in ex.items() if k in RetrievedExample.model_fields}
+            for ex in (resolution_context.get("examples") or [])[:3]
+        ]
+        review_reason = "; ".join(review_reasons)
+        warnings = [
+            {
+                "id": f"reply-review-{idx}",
+                "severity": "warning",
+                "title": "Review required",
+                "detail": reason,
+            }
+            for idx, reason in enumerate(review_reasons)
+        ]
+
+        return DraftReplyResponse(
+            draft_id=draft_id,
+            id=draft_id,
+            status="PENDING_REVIEW",
+            to=to_emails,
+            cc=cc_emails,
+            bcc=[],
+            subject=resolved["subject"],
+            body=draft_body,
+            thread_id=thread_id,
+            in_reply_to=resolved["in_reply_to"],
+            references=resolved["references"],
+            audience_type=cast(Any, audience_type),
+            resolution_meta=resolution_meta,
+            retrieved_examples=[RetrievedExample(**ex) for ex in clean_examples],
+            model_used=acc_settings.model_name or "",
+            review_reason=review_reason,
+            warnings=warnings,
+        )
 
     # --- Chat sessions ------------------------------------------------------
     @app.get("/api/chat/sessions", response_model=ChatSessionListResponse)

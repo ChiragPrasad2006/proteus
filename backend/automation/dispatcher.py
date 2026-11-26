@@ -191,6 +191,7 @@ class Dispatcher:
             body=draft,
             thread_id=request.thread_id,
             in_reply_to=request.in_reply_to,
+            references=list(request.references or []),
         )
         try:
             receipt = self.connector_for_provider(request.provider).send_email(outbound)

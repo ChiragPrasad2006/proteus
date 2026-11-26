@@ -275,3 +275,38 @@ export interface HealthReport {
   generation: { available: boolean; model?: string; detail?: string }
   automation: { dispatcher_ready: boolean; style_learner_ready: boolean }
 }
+
+export type WorkspaceMode = 'compose' | 'inbox'
+export type ReplyMode = 'reply' | 'reply_all'
+
+export interface InboxThreadSummary {
+  thread_id: string
+  subject: string
+  snippet: string
+  last_message_at: string
+  message_count: number
+  participants: string[]
+  unread: boolean
+  latest_sender_name: string
+  latest_sender_email: string
+}
+
+export interface InboxThreadMessage {
+  message_id: string
+  from_name: string
+  from_email: string
+  to: string[]
+  cc: string[]
+  date: string
+  subject: string
+  body_text: string
+  in_reply_to: string
+  references: string[]
+}
+
+export interface InboxThreadDetail {
+  thread_id: string
+  subject: string
+  participants: string[]
+  messages: InboxThreadMessage[]
+}

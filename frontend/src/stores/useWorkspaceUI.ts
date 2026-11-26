@@ -1,8 +1,10 @@
 import { create } from 'zustand'
+import type { WorkspaceMode } from '@/types'
 
 export type MobileTab = 'chat' | 'draft' | 'sessions'
 
 interface WorkspaceUIState {
+  railMode: WorkspaceMode
   paletteOpen: boolean
   profileOpen: boolean
   shortcutsOpen: boolean
@@ -10,6 +12,7 @@ interface WorkspaceUIState {
   draftSheetOpen: boolean
   mobileTab: MobileTab
   autoSendConfirmOpen: boolean
+  setRailMode: (mode: WorkspaceMode) => void
   setPaletteOpen: (open: boolean) => void
   setProfileOpen: (open: boolean) => void
   setShortcutsOpen: (open: boolean) => void
@@ -21,12 +24,14 @@ interface WorkspaceUIState {
 }
 
 export const useWorkspaceUI = create<WorkspaceUIState>((set) => ({
+  railMode: 'compose',
   paletteOpen: false,
   profileOpen: false,
   shortcutsOpen: false,
   draftSheetOpen: false,
   mobileTab: 'chat',
   autoSendConfirmOpen: false,
+  setRailMode: (railMode) => set({ railMode }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setProfileOpen: (profileOpen) => set({ profileOpen }),
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),

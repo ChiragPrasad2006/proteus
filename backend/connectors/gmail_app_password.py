@@ -13,7 +13,7 @@ from email.message import EmailMessage
 from email.utils import make_msgid
 
 from backend.connectors.base import BaseEmailConnector, ConnectorError
-from backend.connectors.imap_mbox import email_message_to_raw
+from backend.connectors.imap_mbox import ImapConnector, email_message_to_raw
 from backend.schemas import OutboundEmailRequest, RawSentEmail, SendReceipt
 
 
@@ -99,6 +99,32 @@ class GmailAppPasswordConnector(BaseEmailConnector):
         except (imaplib.IMAP4.error, OSError) as exc:
             raise ConnectorError("Unable to retrieve Gmail Sent mail with this App Password.") from exc
 
+    def fetch_inbox_threads(self, limit: int = 25) -> list[dict]:
+        """Read-only Gmail INBOX thread listing using IMAP BODY.PEEK[]."""
+        self._validate_inputs()
+        return ImapConnector(
+            host=self.IMAP_HOST,
+            username=self.email,
+            password=self.app_password,
+            folder="INBOX",
+            port=self.IMAP_PORT,
+            smtp_host=self.SMTP_HOST,
+            smtp_port=self.SMTP_PORT,
+        ).fetch_inbox_threads(limit=limit)
+
+    def fetch_thread_messages(self, thread_id: str, limit: int = 100) -> dict | None:
+        """Read-only Gmail INBOX thread detail using IMAP BODY.PEEK[]."""
+        self._validate_inputs()
+        return ImapConnector(
+            host=self.IMAP_HOST,
+            username=self.email,
+            password=self.app_password,
+            folder="INBOX",
+            port=self.IMAP_PORT,
+            smtp_host=self.SMTP_HOST,
+            smtp_port=self.SMTP_PORT,
+        ).fetch_thread_messages(thread_id=thread_id, limit=limit)
+
     def send_email(self, payload: OutboundEmailRequest) -> SendReceipt:
         """Send through Gmail SMTP SSL with the account's App Password."""
         self._validate_inputs()
@@ -111,18 +137,26 @@ class GmailAppPasswordConnector(BaseEmailConnector):
             message["Bcc"] = ", ".join(payload.bcc)
         message["Subject"] = payload.subject
         message["Message-ID"] = make_msgid()
-        if payload.thread_id:
-            message["References"] = payload.thread_id
         if payload.in_reply_to:
             message["In-Reply-To"] = payload.in_reply_to
-        elif payload.thread_id:
+        elif payload.thread_id and str(payload.thread_id).startswith("<"):
             message["In-Reply-To"] = payload.thread_id
+        if payload.references:
+            message["References"] = " ".join(payload.references)
+        elif payload.thread_id and str(payload.thread_id).startswith("<"):
+            message["References"] = payload.thread_id
+        elif payload.in_reply_to:
+            message["References"] = payload.in_reply_to
         message.set_content(payload.body, subtype="plain")
 
         try:
             with smtplib.SMTP_SSL(self.SMTP_HOST, self.SMTP_PORT) as client:
                 client.login(self.email, self.app_password)
                 client.send_message(message, from_addr=self.email, to_addrs=payload.to + payload.cc + payload.bcc)
-            return SendReceipt(message_id=message["Message-ID"], status="sent")
+            return SendReceipt(
+                message_id=message["Message-ID"],
+                thread_id=payload.thread_id,
+                status="sent",
+            )
         except (smtplib.SMTPException, OSError) as exc:
             return SendReceipt(message_id="", status="failed", error=str(exc))

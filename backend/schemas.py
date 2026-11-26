@@ -220,6 +220,7 @@ class OutboundEmailRequest(StrictModel):
     attachments: list[str] = Field(default_factory=list)
     thread_id: str | None = None
     in_reply_to: str | None = None
+    references: list[str] = Field(default_factory=list)
 
 
 class SendReceipt(StrictModel):
@@ -244,6 +245,7 @@ class DispatchRequest(StrictModel):
     incoming_email_context: str | None = None
     thread_id: str | None = None
     in_reply_to: str | None = None
+    references: list[str] = Field(default_factory=list)
     attachments: list[str] = Field(default_factory=list)
     auto_send: bool = False
 
@@ -469,3 +471,65 @@ class ChatSessionDetailResponse(StrictModel):
     session: dict[str, Any]
     messages: list[dict[str, Any]] = Field(default_factory=list)
     draft_cards: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# --- Read-only Inbox Threads & Manual Reply Drafting ---
+class InboxThreadSummary(StrictModel):
+    thread_id: str
+    subject: str = ""
+    snippet: str = ""
+    last_message_at: str = ""
+    message_count: int = 0
+    participants: list[str] = Field(default_factory=list)
+    unread: bool = False
+    latest_sender_name: str = ""
+    latest_sender_email: str = ""
+
+
+class InboxThreadListResponse(StrictModel):
+    threads: list[InboxThreadSummary] = Field(default_factory=list)
+
+
+class InboxThreadMessage(StrictModel):
+    message_id: str
+    from_name: str = ""
+    from_email: str = ""
+    to: list[str] = Field(default_factory=list)
+    cc: list[str] = Field(default_factory=list)
+    date: str = ""
+    subject: str = ""
+    body_text: str = ""
+    in_reply_to: str = ""
+    references: list[str] = Field(default_factory=list)
+
+
+class InboxThreadDetailResponse(StrictModel):
+    thread_id: str
+    subject: str = ""
+    participants: list[str] = Field(default_factory=list)
+    messages: list[InboxThreadMessage] = Field(default_factory=list)
+
+
+class DraftReplyRequest(StrictModel):
+    reply_mode: Literal["reply", "reply_all"] = "reply"
+    instruction: str | None = None
+
+
+class DraftReplyResponse(StrictModel):
+    draft_id: str
+    id: str
+    status: Literal["PENDING_REVIEW"] = "PENDING_REVIEW"
+    to: list[str]
+    cc: list[str] = Field(default_factory=list)
+    bcc: list[str] = Field(default_factory=list)
+    subject: str
+    body: str
+    thread_id: str
+    in_reply_to: str = ""
+    references: list[str] = Field(default_factory=list)
+    audience_type: AudienceMode = "1on1_private"
+    resolution_meta: dict[str, Any] = Field(default_factory=dict)
+    retrieved_examples: list[RetrievedExample] = Field(default_factory=list)
+    model_used: str = ""
+    review_reason: str = ""
+    warnings: list[dict[str, Any]] = Field(default_factory=list)

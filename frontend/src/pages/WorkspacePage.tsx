@@ -6,6 +6,7 @@ import { ChatPane } from '@/components/workspace/ChatPane'
 import { Coachmarks } from '@/components/workspace/Coachmarks'
 import { CommandPalette } from '@/components/workspace/CommandPalette'
 import { DraftPanel } from '@/components/workspace/DraftPanel'
+import { InboxThreadPane } from '@/components/workspace/InboxThreadPane'
 import { SessionRail } from '@/components/workspace/SessionRail'
 import { ShortcutsModal } from '@/components/workspace/ShortcutsModal'
 import { StyleProfile } from '@/components/workspace/StyleProfile'
@@ -21,7 +22,7 @@ import { cn, uid } from '@/lib/utils'
 import { useActiveAccount, useAppStore } from '@/stores/useAppStore'
 import { toast } from '@/stores/useToastStore'
 import { useWorkspaceUI } from '@/stores/useWorkspaceUI'
-import type { Account } from '@/types'
+import type { Account, ReplyMode } from '@/types'
 
 function humanError(err: unknown): string {
   if (err instanceof ApiError) return err.message
@@ -94,6 +95,8 @@ export function WorkspacePage() {
   const setDraftSheetOpen = useWorkspaceUI((state) => state.setDraftSheetOpen)
   const mobileTab = useWorkspaceUI((state) => state.mobileTab)
   const setMobileTab = useWorkspaceUI((state) => state.setMobileTab)
+  const railMode = useWorkspaceUI((state) => state.railMode)
+  const activeThread = useAppStore((state) => state.activeThread)
 
   const [banner, setBanner] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -206,6 +209,35 @@ export function WorkspacePage() {
 
   const handleCancel = useCallback(() => { abortRef.current?.abort() }, [])
 
+  /* ── Manual inbox thread reply drafting ──────────────────────────────── */
+  const handleDraftReply = useCallback(async (threadId: string, replyMode: ReplyMode, instruction: string) => {
+    if (busy) return
+    const accountId = useAppStore.getState().activeAccountId
+    if (!accountId) { setBanner('Connect an account before drafting a reply.'); return }
+
+    const controller = new AbortController()
+    abortRef.current = controller
+    setBusy(true)
+    setBanner(null)
+    try {
+      const draft = await api.draftInboxReply(
+        threadId,
+        { reply_mode: replyMode, instruction: instruction.trim() || undefined },
+        accountId,
+        controller.signal,
+      )
+      if (useAppStore.getState().activeAccountId !== accountId) return
+      useDraftState.getState().ingestTurnDraft(draft, `inbox:${threadId}`, accountId)
+      focusDraft(draft.id)
+    } catch (err) {
+      if (controller.signal.aborted) toast('Reply drafting cancelled.')
+      else setBanner(humanError(err))
+    } finally {
+      setBusy(false)
+      abortRef.current = null
+    }
+  }, [busy, focusDraft])
+
   /* ── Global keyboard shortcuts ───────────────────────────────────────── */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -279,9 +311,17 @@ export function WorkspacePage() {
 
   const chatStage = (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <WorkspaceHeader showDraftButton={isTablet && !isMobile} />
+      <WorkspaceHeader
+        showDraftButton={isTablet && !isMobile}
+        titleOverride={railMode === 'inbox' ? (activeThread?.subject || 'Inbox') : undefined}
+        participantsOverride={railMode === 'inbox' ? activeThread?.participants : undefined}
+      />
       {bannerStrip}
-      <ChatPane busy={busy} onCancel={handleCancel} onSend={(text) => void handleSend(text)} onSelectDraft={focusDraft} />
+      {railMode === 'inbox' ? (
+        <InboxThreadPane busy={busy} onDraftReply={(tid, mode, inst) => void handleDraftReply(tid, mode, inst)} onCancel={handleCancel} />
+      ) : (
+        <ChatPane busy={busy} onCancel={handleCancel} onSend={(text) => void handleSend(text)} onSelectDraft={focusDraft} />
+      )}
     </main>
   )
 
@@ -302,9 +342,9 @@ export function WorkspacePage() {
         </div>
         <nav className="flex shrink-0 border-t border-hairline bg-cobalt-deep" aria-label="Workspace sections">
           {([
-            { tab: 'chat', label: 'Chat', icon: MessageSquare },
+            { tab: 'chat', label: railMode === 'inbox' ? 'Inbox' : 'Chat', icon: MessageSquare },
             { tab: 'draft', label: 'Draft', icon: FileText },
-            { tab: 'sessions', label: 'Sessions', icon: MessagesSquare },
+            { tab: 'sessions', label: railMode === 'inbox' ? 'Threads' : 'Sessions', icon: MessagesSquare },
           ] as const).map(({ tab, label, icon: Icon }) => (
             <button
               key={tab}

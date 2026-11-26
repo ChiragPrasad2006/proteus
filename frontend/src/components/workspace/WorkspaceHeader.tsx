@@ -14,9 +14,12 @@ import { useWorkspaceUI } from '@/stores/useWorkspaceUI'
 export interface WorkspaceHeaderProps {
   /** Show the draft-sheet trigger (viewports < 1100px). */
   showDraftButton: boolean
+  /** Optional override when viewing an Inbox thread instead of a Compose session. */
+  titleOverride?: string
+  participantsOverride?: string[]
 }
 
-export function WorkspaceHeader({ showDraftButton }: WorkspaceHeaderProps) {
+export function WorkspaceHeader({ showDraftButton, titleOverride, participantsOverride }: WorkspaceHeaderProps) {
   const sessions = useAppStore((state) => state.sessions)
   const activeSessionId = useAppStore((state) => state.activeSessionId)
   const renameSession = useAppStore((state) => state.renameSession)
@@ -31,7 +34,8 @@ export function WorkspaceHeader({ showDraftButton }: WorkspaceHeaderProps) {
   const setAutoSendConfirmOpen = useWorkspaceUI((state) => state.setAutoSendConfirmOpen)
 
   const session = sessions.find((item) => item.id === activeSessionId) ?? null
-  const sessionTitle = session?.title?.trim() || 'New session'
+  const isInboxMode = Boolean(titleOverride !== undefined)
+  const sessionTitle = titleOverride ?? (session?.title?.trim() || 'New session')
   const [editing, setEditing] = useState(false)
   const [draftTitle, setDraftTitle] = useState(sessionTitle)
   const [modelHelpOpen, setModelHelpOpen] = useState(false)
@@ -53,9 +57,11 @@ export function WorkspaceHeader({ showDraftButton }: WorkspaceHeaderProps) {
   const modelReady = !backendOffline && (health.data?.generation?.available === true || health.data?.qwen?.available === true)
   const modelLabel = backendOffline ? 'Backend offline' : modelReady ? 'Local model · Ready' : 'Ollama offline'
 
-  // Resolved recipient chips for the active session (never raw uppercase emails).
+  // Resolved recipient chips for the active session or inbox thread.
   const sessionDraft = draft ?? Object.values(drafts).filter((item) => item.sessionId === activeSessionId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
-  const recipientEmails = sessionDraft ? [...sessionDraft.to, ...sessionDraft.cc, ...sessionDraft.bcc] : []
+  const recipientEmails = participantsOverride && participantsOverride.length > 0
+    ? participantsOverride
+    : sessionDraft ? [...sessionDraft.to, ...sessionDraft.cc, ...sessionDraft.bcc] : []
   const recipientNames = recipientEmails.map((email) => contacts.find((contact) => contact.email === email)?.name || friendlyName(email))
 
   const commitTitle = () => {
@@ -91,8 +97,8 @@ export function WorkspaceHeader({ showDraftButton }: WorkspaceHeaderProps) {
           ) : (
             <button
               type="button"
-              onClick={() => session && setEditing(true)}
-              disabled={!session}
+              onClick={() => !isInboxMode && session && setEditing(true)}
+              disabled={isInboxMode || !session}
               title={sessionTitle}
               className="block min-w-0 max-w-full text-left disabled:cursor-default"
             >

@@ -6,13 +6,13 @@
       "to": ["sam.park@vertex.ai"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Confirm Friday deploy is on track and share the Model v3 eval results (94% pass rate). Ask if they want a quick sync call tomorrow 10am.",
-      "incoming_context": null,
+      "task_prompt": "Confirm Friday deploy is on track and share that Model v3 hit 94% pass rate on staging. Ask if he wants a quick sync call tomorrow 10am.",
+      "incoming_context": "From: Sam Park <sam.park@vertex.ai>\nSubject: Vertex rollout check\n\nAlex - how are the staging numbers looking for Friday?",
       "required_facts": ["Friday deploy", "Model v3", "94% pass rate", "tomorrow 10am"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
       "forbidden_patterns": ["**", "{first_name}", "Dear", "Sincerely", "I hope this email finds you well"],
-      "reviewer_notes": "Should use casual 'Hey Sam,' greeting and 'Best, Alex' signoff. Can reference 'usual Friday deploy' shorthand."
+      "reviewer_notes": "Should use casual 'Hey Sam,' greeting and 'Best, Alex' signoff. Can reference 'the usual Friday deploy' shorthand."
     },
     {
       "id": "casual_1on1_002",
@@ -20,13 +20,13 @@
       "to": ["lisa.chen@nexusailabs.com"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Assign priority tasks for the sprint: finish seed_corpus.json with 30 scenarios, wire runner.py with mocked LLM, implement metrics for audience_accuracy and leakage_violations.",
+      "task_prompt": "Assign priority tasks for the sprint: finish the staging cluster load test, pin pytest below 9.0.0 in CI, and verify the customer onboarding checklist. Confirm ship date doesn't move.",
       "incoming_context": null,
-      "required_facts": ["seed_corpus.json", "30 scenarios", "runner.py", "mocked LLM", "audience_accuracy", "leakage_violations"],
+      "required_facts": ["staging cluster", "pytest", "9.0.0", "onboarding checklist", "ship date"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
       "forbidden_patterns": ["**", "{first_name}", "Dear", "Sincerely", "I hope this email finds you well"],
-      "reviewer_notes": "Should use 'Hey Lisa,' greeting. Direct, bullet-style communication. 'Ship date doesn't move' phrasing expected."
+      "reviewer_notes": "Should use 'Hey Lisa,' greeting and bulleted action items per her recipient rule."
     },
     {
       "id": "casual_1on1_003",
@@ -34,13 +34,13 @@
       "to": ["elena.rossi@designstudio.agency"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Review the Figma landing page design. Note the hero headline needs tighter tracking at -0.03em. Confirm ship date doesn't move.",
-      "incoming_context": null,
-      "required_facts": ["Figma", "landing page", "hero headline", "-0.03em tracking", "ship date doesn't move"],
+      "task_prompt": "Review the Figma landing page design. Note the hero headline needs tighter tracking at -0.03em, ask for a Loom walkthrough once updated, and confirm ship date doesn't move.",
+      "incoming_context": "From: Elena Rossi <elena.rossi@designstudio.agency>\nSubject: Updated Figma frames\n\nJust pushed the revised landing page hero section. Let me know what needs adjusting!",
+      "required_facts": ["Figma", "hero headline", "-0.03em", "Loom", "ship date"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
       "forbidden_patterns": ["**", "{first_name}", "Dear", "Sincerely", "I hope this email finds you well"],
-      "reviewer_notes": "Creative collab tone - 'Hey Elena,' greeting, 'Talk soon, Alex' signoff. Visual references welcome."
+      "reviewer_notes": "Creative collab tone - 'Hey Elena,' greeting, relaxed visual feedback referencing Figma/Loom."
     },
     {
       "id": "casual_1on1_004",
@@ -48,13 +48,13 @@
       "to": ["priya.sharma@healthtech.io"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Confirm the synthetic PHI dataset is ready (10k records, de-identified). Mention Friday 4pm standup as sync anchor. Note HIPAA compliance context.",
-      "incoming_context": null,
-      "required_facts": ["synthetic PHI dataset", "10k records", "de-identified", "Friday 4pm standup", "HIPAA compliance"],
+      "task_prompt": "Confirm the synthetic PHI dataset is ready (10k de-identified records). Mention Friday 4pm standup as sync anchor and confirm HIPAA compliance gates passed.",
+      "incoming_context": "From: Priya Sharma <priya.sharma@healthtech.io>\nSubject: Clinical validation dataset status\n\nHi Alex, is the de-identified test batch ready for this week's review?",
+      "required_facts": ["synthetic PHI", "10k", "de-identified", "Friday 4pm standup", "HIPAA"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
       "forbidden_patterns": ["**", "{first_name}", "Dear", "Sincerely", "I hope this email finds you well"],
-      "reviewer_notes": "Should use 'Hi Priya,' greeting and 'Thanks, Alex' signoff. Can reference Friday standup casually."
+      "reviewer_notes": "Should use 'Hi Priya,' greeting and 'Thanks, Alex' style. Can reference Friday 4pm standup casually."
     },
     {
       "id": "casual_1on1_005",
@@ -62,9 +62,9 @@
       "to": ["sam.park@vertex.ai"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Share the Ollama CUDA OOM fix: set OLLAMA_NUM_PARALLEL=1, OLLAMA_MAX_LOADED_MODELS=1, OLLAMA_CONTEXT_LENGTH=4096, OLLAMA_FLASH_ATTENTION=1. Kill llama-server.exe first.",
+      "task_prompt": "Share the Ollama CUDA OOM fix: set OLLAMA_NUM_PARALLEL=1, OLLAMA_MAX_LOADED_MODELS=1, OLLAMA_CONTEXT_LENGTH=4096, and OLLAMA_FLASH_ATTENTION=1. Tell him to kill llama-server.exe first.",
       "incoming_context": null,
-      "required_facts": ["CUDA OOM fix", "OLLAMA_NUM_PARALLEL=1", "OLLAMA_MAX_LOADED_MODELS=1", "OLLAMA_CONTEXT_LENGTH=4096", "OLLAMA_FLASH_ATTENTION=1", "kill llama-server.exe"],
+      "required_facts": ["CUDA OOM", "OLLAMA_NUM_PARALLEL=1", "OLLAMA_MAX_LOADED_MODELS=1", "OLLAMA_CONTEXT_LENGTH=4096", "OLLAMA_FLASH_ATTENTION=1", "llama-server.exe"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
       "forbidden_patterns": ["**", "{first_name}", "Dear", "Sincerely", "I hope this email finds you well"],
@@ -76,13 +76,13 @@
       "to": ["maria.santos@acme-corp.com"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Deliver Q4 pilot proposal with scope, timeline, and pricing. Reference PO #ACME-2026-045. Note the eval harness must run offline with synthetic data only.",
+      "task_prompt": "Deliver the Q4 pilot proposal with scope, timeline, and pricing. Reference PO #ACME-2026-045 and confirm the validation pipeline runs offline inside their VPC with synthetic data only.",
       "incoming_context": null,
       "required_facts": ["Q4 pilot proposal", "PO #ACME-2026-045", "offline", "synthetic data", "scope", "timeline", "pricing"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
       "forbidden_patterns": ["Hey", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Formal client tone. 'Hi Maria,' greeting. 'Best regards, Alex' signoff. PO number in subject. Procurement may CC."
+      "reviewer_notes": "Formal client tone. 'Hi Maria,' greeting. Keep formal since procurement CCs everything. Include PO #ACME-2026-045."
     },
     {
       "id": "formal_client_1on1_002",
@@ -90,13 +90,13 @@
       "to": ["thomas.ng@regulatory.gov"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Submit annual compliance certification for AI Model Registry. Reference Section 164.312(a)(1) and 164.312(b). Certify synthetic-only training data and offline eval methodology.",
+      "task_prompt": "Submit annual compliance certification for the AI Model Registry. Reference Section 164.312(a)(1) and Section 164.312(b). Certify synthetic-only training data and isolated local inference.",
       "incoming_context": null,
-      "required_facts": ["annual compliance certification", "AI Model Registry", "Section 164.312(a)(1)", "Section 164.312(b)", "synthetic-only training", "offline eval"],
+      "required_facts": ["compliance certification", "AI Model Registry", "164.312(a)(1)", "164.312(b)", "synthetic", "local inference"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
       "forbidden_patterns": ["Hey", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well", "don't", "can't"],
-      "reviewer_notes": "Strict formal register. 'Dear Thomas,' greeting. 'Sincerely, Alex Chen' signoff. No contractions. Regulation sections by number."
+      "reviewer_notes": "Strict formal register. 'Dear Thomas,' greeting. 'Sincerely, Alex Chen' signoff. No contractions. Cite regulation sections by number."
     },
     {
       "id": "formal_client_1on1_003",
@@ -104,13 +104,13 @@
       "to": ["james.wilson@quantumventures.vc"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Monthly investor update: ARR crossed $420k, eval harness v2 ships next week with 3-baseline benchmarking, 3 new enterprise pilots closed, team grew to 4, runway 18 months.",
-      "incoming_context": null,
-      "required_facts": ["ARR $420k", "eval harness v2", "3-baseline benchmarking", "3 enterprise pilots", "team of 4", "18 months runway"],
+      "task_prompt": "Send monthly investor update: ARR crossed $420k, v2 enterprise release ships next week, 3 new enterprise pilots closed, team grew to 4 engineers, and cash runway is 18 months.",
+      "incoming_context": "From: James Wilson <james.wilson@quantumventures.vc>\nSubject: November partner check-in\n\nAlex - could you send over the November numbers ahead of Monday's partner meeting?",
+      "required_facts": ["$420k", "v2 enterprise release", "3", "4", "18 months"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
       "forbidden_patterns": ["Hey", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Executive tone. 'Hello James,' greeting. Executive summary first. 'Best regards, Alex' signoff. Board members may be BCC'd."
+      "reviewer_notes": "Executive tone. 'Hello James,' greeting. Executive summary first, details below."
     },
     {
       "id": "formal_client_1on1_004",
@@ -118,13 +118,13 @@
       "to": ["david.kumar@partnerco.com"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Confirm SLA Tier 2 commitment: p99 < 200ms for /api/draft endpoint. Tier 1 (batch) p99 < 500ms. Tier 3 (streaming) best-effort. Note legal is CC'd on MSA amendment.",
+      "task_prompt": "Confirm SLA Tier 2 commitment: p99 under 200ms for /api/draft endpoint, Tier 1 batch p99 under 500ms, and Tier 3 streaming best-effort. Note legal will be included on the MSA amendment.",
       "incoming_context": null,
-      "required_facts": ["SLA Tier 2", "p99 < 200ms", "/api/draft", "Tier 1 batch p99 < 500ms", "Tier 3 streaming best-effort", "legal CC'd", "MSA amendment"],
+      "required_facts": ["SLA Tier 2", "200ms", "/api/draft", "Tier 1", "500ms", "Tier 3", "MSA amendment"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
       "forbidden_patterns": ["Hey", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Partner context. 'Hi David,' greeting. Explicit SLA tiers. 'Best regards, Alex' signoff."
+      "reviewer_notes": "Partner context. 'Hi David,' greeting. Explicit SLA tiers."
     },
     {
       "id": "familiar_plus_cc_escalation_001",
@@ -132,27 +132,27 @@
       "to": ["sam.park@vertex.ai"],
       "cc": ["james.wilson@quantumventures.vc"],
       "bcc": [],
-      "task_prompt": "Confirm Friday deploy on track. Model v3 passes eval at 94%. Note that James (investor) is CC'd for visibility. Keep context self-contained for the CC recipient.",
-      "incoming_context": null,
-      "required_facts": ["Friday deploy", "Model v3", "94% pass rate", "James CC'd for visibility"],
+      "task_prompt": "Confirm Friday deployment of Model v3 is on track with a 94% staging pass rate. Note that James Wilson (investor) is CC'd for visibility and summarize the Vertex integration status clearly.",
+      "incoming_context": "From: Sam Park <sam.park@vertex.ai>\nCc: James Wilson <james.wilson@quantumventures.vc>\nSubject: Re: Vertex integration readiness\n\nLooping James in for visibility - are we still set for Friday?",
+      "required_facts": ["Friday", "Model v3", "94%", "James", "Vertex integration"],
       "expected_audience": "group_cc",
       "expected_confidence": "low",
       "forbidden_patterns": ["Hey Sam", "usual Friday deploy", "Cheers", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "CC escalation test. Should use 'Hi Sam,' not 'Hey Sam,'. Suppress casual 1:1 rule. Inclusive greeting. No private shorthand."
+      "reviewer_notes": "CC escalation test. Must use 'Hi Sam,' not 'Hey Sam,'. Suppress casual 1:1 rule and private shorthand. Keep context self-contained."
     },
     {
       "id": "familiar_plus_cc_escalation_002",
       "category": "familiar_plus_cc_escalation",
-      "to": ["priya.sharma@healthtech.io"],
+      "to": ["lisa.chen@nexusailabs.com"],
       "cc": ["thomas.ng@regulatory.gov"],
       "bcc": [],
-      "task_prompt": "Share HIPAA eval results: synthetic PHI dataset 10k records, F1 0.91 on clinical NER. Regulatory contact (Thomas) CC'd. No PHI in training or eval.",
+      "task_prompt": "Confirm that our clinical model registry submission covers Section 164.312(a)(1) and Section 164.312(b) using synthetic training data only. Thomas Ng is CC'd for audit review.",
       "incoming_context": null,
-      "required_facts": ["HIPAA eval", "synthetic PHI 10k records", "F1 0.91", "clinical NER", "Thomas CC'd", "no PHI in training"],
+      "required_facts": ["164.312(a)(1)", "164.312(b)", "synthetic", "Thomas", "audit"],
       "expected_audience": "group_cc",
       "expected_confidence": "low",
-      "forbidden_patterns": ["Hey Priya", "Friday 4pm standup", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Regulatory CC requires formal tone. Suppress casual greeting and Friday standup reference. Professional baseline."
+      "forbidden_patterns": ["Hey Lisa", "staging cluster", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
+      "reviewer_notes": "Regulatory CC requires formal professional tone. Suppress casual greeting and internal team shorthand."
     },
     {
       "id": "familiar_plus_cc_escalation_003",
@@ -160,13 +160,13 @@
       "to": ["lisa.chen@nexusailabs.com"],
       "cc": ["maria.santos@acme-corp.com"],
       "bcc": [],
-      "task_prompt": "Assign sprint priorities: seed_corpus.json, runner.py, metrics. Client (Maria) CC'd for visibility on deliverables. PO #ACME-2026-045 covers the pilot.",
+      "task_prompt": "Confirm the Q4 Acme Corp pilot deliverables: offline evaluation suite in Week 1, quantized model package in Week 3, and integration runbook in Week 4 under PO #ACME-2026-045. Maria Santos is CC'd.",
       "incoming_context": null,
-      "required_facts": ["seed_corpus.json", "runner.py", "metrics", "Maria CC'd", "PO #ACME-2026-045"],
+      "required_facts": ["Week 1", "Week 3", "Week 4", "PO #ACME-2026-045", "Maria"],
       "expected_audience": "group_cc",
       "expected_confidence": "low",
-      "forbidden_patterns": ["Hey Lisa", "ship date doesn't move", "Best,", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Client CC requires professional tone. Suppress team shorthand. Inclusive context for Maria."
+      "forbidden_patterns": ["Hey Lisa", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
+      "reviewer_notes": "Client CC requires professional tone. Must not use 'Hey Lisa,' or casual 1:1 shorthand. Context self-contained for Maria."
     },
     {
       "id": "familiar_plus_cc_escalation_004",
@@ -174,13 +174,13 @@
       "to": ["elena.rossi@designstudio.agency"],
       "cc": ["david.kumar@partnerco.com"],
       "bcc": [],
-      "task_prompt": "Review Figma design: hero headline tracking -0.03em, cobalt palette WCAG AA verified. Partner (David) CC'd. Ship date doesn't move.",
+      "task_prompt": "Approve the partner portal landing page layout: hero headline tracking at -0.03em and WCAG AA cobalt contrast verified. David Kumar is CC'd for partner sign-off.",
       "incoming_context": null,
-      "required_facts": ["Figma", "hero headline", "-0.03em", "cobalt palette", "WCAG AA", "David CC'd", "ship date doesn't move"],
+      "required_facts": ["landing page", "-0.03em", "WCAG AA", "David", "partner"],
       "expected_audience": "group_cc",
       "expected_confidence": "low",
-      "forbidden_patterns": ["Hey Elena", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Partner CC. Should use 'Hi Elena,' greeting. Professional but can keep 'ship date doesn't move' as it's a global rule."
+      "forbidden_patterns": ["Hey Elena", "Talk soon", "Cheers", "**", "{first_name}", "I hope this email finds you well"],
+      "reviewer_notes": "Partner CC. Should use 'Hi Elena,' greeting. Suppress casual creative banter and 'Talk soon' signoff."
     },
     {
       "id": "familiar_plus_cc_escalation_005",
@@ -188,13 +188,13 @@
       "to": ["sam.park@vertex.ai"],
       "cc": ["maria.santos@acme-corp.com"],
       "bcc": [],
-      "task_prompt": "Share Ollama CUDA fix env vars. Client (Maria) CC'd for technical transparency. OLLAMA_NUM_PARALLEL=1, OLLAMA_MAX_LOADED_MODELS=1, CONTEXT_LENGTH=4096, FLASH_ATTENTION=1.",
+      "task_prompt": "Share the production Ollama memory configuration (OLLAMA_NUM_PARALLEL=1, OLLAMA_MAX_LOADED_MODELS=1, OLLAMA_CONTEXT_LENGTH=4096, OLLAMA_FLASH_ATTENTION=1) with Maria Santos CC'd for Acme deployment readiness.",
       "incoming_context": null,
-      "required_facts": ["CUDA fix", "OLLAMA_NUM_PARALLEL=1", "OLLAMA_MAX_LOADED_MODELS=1", "CONTEXT_LENGTH=4096", "FLASH_ATTENTION=1", "Maria CC'd"],
+      "required_facts": ["OLLAMA_NUM_PARALLEL=1", "OLLAMA_MAX_LOADED_MODELS=1", "OLLAMA_CONTEXT_LENGTH=4096", "OLLAMA_FLASH_ATTENTION=1", "Maria"],
       "expected_audience": "group_cc",
       "expected_confidence": "low",
-      "forbidden_patterns": ["Hey Sam", "Cheers", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Client CC. Formal professional tone. 'Hi Sam,' greeting. Suppress casual shorthand."
+      "forbidden_patterns": ["Hey Sam", "usual Friday deploy", "Cheers", "**", "{first_name}", "I hope this email finds you well"],
+      "reviewer_notes": "Client CC. Formal professional tone. 'Hi Sam,' greeting. Suppress casual 1:1 shorthand."
     },
     {
       "id": "cold_start_new_recipient_001",
@@ -202,13 +202,13 @@
       "to": ["new.vendor@supplierco.com"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Request quote for GPU cloud instances: 4x RTX 5060 Ti 8GB, 3-month term. Need pricing by Friday. No prior history with this vendor.",
+      "task_prompt": "Request a quote for 4x RTX 5060 Ti 8GB GPU cloud instances on a 3-month term. Ask for pricing by Friday.",
       "incoming_context": null,
-      "required_facts": ["GPU cloud instances", "4x RTX 5060 Ti 8GB", "3-month term", "pricing by Friday"],
+      "required_facts": ["GPU", "4x RTX 5060 Ti 8GB", "3-month", "Friday"],
       "expected_audience": "1on1_private",
       "expected_confidence": "low",
       "forbidden_patterns": ["Hey", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Cold start - no history. Should use global professional baseline: 'Hi [Name],' 'Best, Alex' signoff. No recipient-specific rules."
+      "reviewer_notes": "Cold start - no history. Should use global professional baseline ('Hi New,' or 'Hello,') and clean signoff."
     },
     {
       "id": "cold_start_new_recipient_002",
@@ -216,13 +216,13 @@
       "to": ["procurement@enterprise-client.com"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Submit proposal for AI eval framework: 4-week delivery, offline synthetic benchmark, reproducible harness. Reference standard MSA terms.",
-      "incoming_context": null,
-      "required_facts": ["AI eval framework", "4-week delivery", "offline synthetic benchmark", "reproducible harness", "MSA terms"],
+      "task_prompt": "Submit proposal for an offline AI evaluation framework with 4-week delivery and reproducible synthetic benchmarks under standard MSA terms.",
+      "incoming_context": "From: Procurement Team <procurement@enterprise-client.com>\nSubject: Vendor RFP - Offline Model Evaluation\n\nPlease send over your delivery timeline and compliance summary for our vendor review.",
+      "required_facts": ["AI evaluation", "4-week", "synthetic", "MSA"],
       "expected_audience": "1on1_private",
       "expected_confidence": "low",
       "forbidden_patterns": ["Hey", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Cold start with enterprise procurement. Formal professional baseline. 'Hi [Name],' 'Best regards, Alex' signoff."
+      "reviewer_notes": "Cold start with enterprise procurement. Formal professional baseline."
     },
     {
       "id": "cold_start_new_recipient_003",
@@ -230,9 +230,9 @@
       "to": ["research.collab@university.edu"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Propose research collaboration on LLM eval methodologies. Share our 3-baseline benchmark design. Request meeting next week to discuss.",
+      "task_prompt": "Propose a research collaboration on LLM evaluation methodologies using our 3-baseline benchmark design. Request a 30-minute meeting next week.",
       "incoming_context": null,
-      "required_facts": ["research collaboration", "LLM eval methodologies", "3-baseline benchmark", "meeting next week"],
+      "required_facts": ["research collaboration", "LLM evaluation", "3-baseline", "next week"],
       "expected_audience": "1on1_private",
       "expected_confidence": "low",
       "forbidden_patterns": ["Hey", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
@@ -244,9 +244,9 @@
       "to": ["media.inquiries@techpress.com"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Respond to media inquiry about Series A funding. Confirm $5.2M led by Quantum Ventures. Decline interview, offer written statement only.",
-      "incoming_context": null,
-      "required_facts": ["Series A", "$5.2M", "Quantum Ventures", "decline interview", "written statement"],
+      "task_prompt": "Respond to the media inquiry about our $5.2M Series A led by Quantum Ventures. Politely decline a live interview and offer a written statement instead.",
+      "incoming_context": "From: TechPress Desk <media.inquiries@techpress.com>\nSubject: Interview request - Nexus AI Labs Series A\n\nHi Alex, we're covering recent AI infrastructure rounds and would love 15 minutes on the record.",
+      "required_facts": ["Series A", "$5.2M", "Quantum Ventures", "written statement"],
       "expected_audience": "1on1_private",
       "expected_confidence": "low",
       "forbidden_patterns": ["Hey", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
@@ -258,9 +258,9 @@
       "to": ["david.kumar@partnerco.com"],
       "cc": ["legal@partnerco.com"],
       "bcc": [],
-      "task_prompt": "SLA review Q2 results: Tier 1 99.2% availability, Tier 2 98.7% at 187ms p99, Tier 3 94% success. Legal CC'd for MSA amendment.",
+      "task_prompt": "Share Q2 SLA review numbers: Tier 1 at 99.2% availability, Tier 2 at 98.7% availability and 187ms p99 latency, and Tier 3 at 94% completion. Legal is CC'd for the MSA amendment.",
       "incoming_context": null,
-      "required_facts": ["SLA review Q2", "Tier 1 99.2%", "Tier 2 98.7% 187ms", "Tier 3 94%", "legal CC'd", "MSA amendment"],
+      "required_facts": ["Tier 1", "99.2%", "Tier 2", "98.7%", "187ms", "Tier 3", "94%", "MSA amendment"],
       "expected_audience": "group_cc",
       "expected_confidence": "high",
       "forbidden_patterns": ["Hey David", "Cheers", "**", "{first_name}", "I hope this email finds you well"],
@@ -272,9 +272,9 @@
       "to": ["david.kumar@partnerco.com"],
       "cc": ["legal@partnerco.com", "sales@partnerco.com"],
       "bcc": [],
-      "task_prompt": "Partnership kickoff Monday 10am. Agenda: technical integration, SLA definitions Tier 1/2/3, shared eval benchmark. Legal and sales CC'd.",
+      "task_prompt": "Confirm partnership kickoff for Monday 10am with legal and sales CC'd. Agenda: technical integration endpoints, SLA definitions (Tier 1/2/3), and joint acceptance benchmarks.",
       "incoming_context": null,
-      "required_facts": ["partnership kickoff", "Monday 10am", "technical integration", "SLA Tier 1/2/3", "shared eval benchmark", "legal CC'd", "sales CC'd"],
+      "required_facts": ["Monday 10am", "technical integration", "Tier 1/2/3", "acceptance benchmarks"],
       "expected_audience": "group_cc",
       "expected_confidence": "high",
       "forbidden_patterns": ["Hey David", "Cheers", "**", "{first_name}", "I hope this email finds you well"],
@@ -286,13 +286,13 @@
       "to": ["priya.sharma@healthtech.io"],
       "cc": ["legal@healthtech.io"],
       "bcc": [],
-      "task_prompt": "HIPAA compliance update: synthetic dataset verified, §164.312(a)(1) and (b) compliance confirmed. Legal CC'd for audit trail.",
-      "incoming_context": null,
-      "required_facts": ["HIPAA compliance", "synthetic dataset verified", "§164.312(a)(1)", "§164.312(b)", "legal CC'd", "audit trail"],
+      "task_prompt": "Confirm HIPAA compliance status for the synthetic dataset: §164.312(a)(1) access controls and §164.312(b) audit logging verified, with legal CC'd for the audit trail.",
+      "incoming_context": "From: Priya Sharma <priya.sharma@healthtech.io>\nCc: Legal <legal@healthtech.io>\nSubject: Pre-audit HIPAA sign-off\n\nAlex, legal needs written confirmation of the §164.312 controls before Friday.",
+      "required_facts": ["HIPAA", "synthetic dataset", "164.312(a)(1)", "164.312(b)", "audit"],
       "expected_audience": "group_cc",
       "expected_confidence": "high",
       "forbidden_patterns": ["Hey Priya", "Friday 4pm standup", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Regulatory CC context. Formal professional tone. Regulation sections by number. Suppress casual Friday standup reference."
+      "reviewer_notes": "Group CC with history. Formal professional tone. Suppress casual Friday 4pm standup reference."
     },
     {
       "id": "broadcast_bcc_001",
@@ -300,41 +300,41 @@
       "to": ["all-hands@nexusailabs.com"],
       "cc": [],
       "bcc": ["team@nexusailabs.com", "advisors@nexusailabs.com", "investors@quantumventures.vc"],
-      "task_prompt": "Company announcement: H1 2026 roadmap - eval harness v2 with 3-baseline benchmark, multi-account onboarding, GGUF export for edge. All hands Thursday 10am.",
+      "task_prompt": "Share Q4 company roadmap milestones: ship Model v3 edge export, complete multi-account onboarding, and lock enterprise pilots. All-hands sync is Thursday 10am.",
       "incoming_context": null,
-      "required_facts": ["H1 2026 roadmap", "eval harness v2", "3-baseline benchmark", "multi-account onboarding", "GGUF export", "edge deployment", "Thursday 10am"],
+      "required_facts": ["Q4", "Model v3", "multi-account onboarding", "enterprise pilots", "Thursday 10am"],
       "expected_audience": "broadcast_bcc",
-      "expected_confidence": "low",
+      "expected_confidence": "medium",
       "forbidden_patterns": ["Hey", "Hi Sam", "Hi Priya", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Broadcast BCC. 'Hello everyone,' greeting. Never address BCC recipients. Impersonal neutral register."
+      "reviewer_notes": "Broadcast BCC with existing all-hands history (1 recent + 2 stale). 'Hello everyone,' greeting. Never mention BCC recipients."
     },
     {
       "id": "broadcast_bcc_002",
       "category": "broadcast_bcc",
-      "to": ["all-hands@nexusailabs.com"],
+      "to": ["partners-announce@external-network.org"],
       "cc": [],
-      "bcc": ["team@nexusailabs.com", "advisors@nexusailabs.com"],
-      "task_prompt": "Announcement: Series A closed at $5.2M led by Quantum Ventures. Runway 24 months. Team growing to 8. Thank the team.",
+      "bcc": ["david.kumar@partnerco.com", "maria.santos@acme-corp.com"],
+      "task_prompt": "Announce our $5.2M Series A led by Quantum Ventures, extending runway to 24 months and expanding the engineering team to 8. Thank partners for their support.",
       "incoming_context": null,
-      "required_facts": ["Series A closed", "$5.2M", "Quantum Ventures", "24 months runway", "team growing to 8"],
+      "required_facts": ["Series A", "$5.2M", "Quantum Ventures", "24 months", "8"],
       "expected_audience": "broadcast_bcc",
       "expected_confidence": "low",
-      "forbidden_patterns": ["Hey", "Hi Sam", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Major announcement broadcast. 'Hello everyone,' greeting. Neutral tone. No personal references."
+      "forbidden_patterns": ["Hey", "Hi David", "Hi Maria", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
+      "reviewer_notes": "Cold-start broadcast BCC. 'Hello everyone,' greeting. Neutral tone. Never name BCC'd partners."
     },
     {
       "id": "broadcast_bcc_003",
       "category": "broadcast_bcc",
-      "to": ["security@nexusailabs.com"],
+      "to": ["security-notices@external-network.org"],
       "cc": [],
       "bcc": ["all-hands@nexusailabs.com", "advisors@nexusailabs.com"],
-      "task_prompt": "Security policy update: zero external CDN requests. Google Fonts only for fonts. All assets local. CSP headers verified.",
+      "task_prompt": "Issue security policy bulletin: zero external CDN requests, all assets served locally, and strict CSP headers verified before every release.",
       "incoming_context": null,
-      "required_facts": ["security policy", "zero external CDN", "Google Fonts only", "all assets local", "CSP headers verified"],
+      "required_facts": ["security policy", "zero external CDN", "locally", "CSP headers"],
       "expected_audience": "broadcast_bcc",
       "expected_confidence": "low",
-      "forbidden_patterns": ["Hey", "Hi", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Security broadcast. Impersonal. 'Hello everyone,' greeting. No personal addressing."
+      "forbidden_patterns": ["Hey", "Hi ", "Hi,", "Cheers", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
+      "reviewer_notes": "Cold-start security broadcast. Impersonal. 'Hello everyone,' greeting. No personal addressing."
     },
     {
       "id": "time_decay_relationship_shift_001",
@@ -342,13 +342,13 @@
       "to": ["sam.park@vertex.ai"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Confirm current style: 'Hey Sam,' greeting and 'Best, Alex' signoff. Note that Jan 2026 emails used 'Hey there,' and 'Cheers, Alex' - those are stale per 90-day half-life.",
+      "task_prompt": "Follow up on Vertex sandbox throughput numbers and confirm we are ready for Friday deployment at 18 requests per second with rollback verified.",
       "incoming_context": null,
-      "required_facts": ["current style", "Hey Sam greeting", "Best Alex signoff", "Jan 2026 stale", "90-day half-life"],
+      "required_facts": ["Vertex", "throughput", "Friday", "18 requests per second", "rollback"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
-      "forbidden_patterns": ["Hey there", "Cheers Alex", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Tests time decay. Old emails (180+ days) had different style. Recent emails (5-45 days) should dominate. Current casual 1:1 style expected."
+      "forbidden_patterns": ["Hi there", "Cheers", "**", "{first_name}", "I hope this email finds you well"],
+      "reviewer_notes": "Tests time decay: stale Q1 emails used 'Hi there,'/'Cheers, Alex', recent emails use 'Hey Sam,'/'Best, Alex'. Recent style should dominate."
     },
     {
       "id": "time_decay_relationship_shift_002",
@@ -356,13 +356,13 @@
       "to": ["priya.sharma@healthtech.io"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Confirm current style: 'Hi Priya,' greeting and 'Thanks, Alex' signoff. Note Feb 2026 used 'Hey there,' and 'Talk soon' - stale per 90-day half-life.",
+      "task_prompt": "Follow up on the clinical NER intake taxonomy and confirm the updated entity labels will be reviewed during Friday 4pm standup.",
       "incoming_context": null,
-      "required_facts": ["current style", "Hi Priya greeting", "Thanks Alex signoff", "Feb 2026 stale", "90-day half-life"],
+      "required_facts": ["clinical NER", "taxonomy", "entity labels", "Friday 4pm standup"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
       "forbidden_patterns": ["Hey there", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Time decay test. Recent style should win over stale Feb emails. 90-day half-life weighting verified."
+      "reviewer_notes": "Tests time decay: stale Q1 emails used 'Hey there,'/'Talk soon', recent emails use 'Hi Priya,'/'Thanks, Alex'."
     },
     {
       "id": "time_decay_relationship_shift_003",
@@ -370,13 +370,13 @@
       "to": ["maria.santos@acme-corp.com"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Confirm calibrated style: 'Hi Maria,' greeting and 'Best regards, Alex' signoff. Early pilot (Jan 2026) was overly formal 'Dear Maria,' 'Sincerely' - calibrated after procurement feedback.",
+      "task_prompt": "Confirm the updated vendor security attestation and milestone schedule for PO #ACME-2026-045 are ready for procurement review.",
       "incoming_context": null,
-      "required_facts": ["calibrated style", "Hi Maria greeting", "Best regards Alex", "Jan 2026 overly formal", "procurement feedback"],
+      "required_facts": ["security", "milestone schedule", "PO #ACME-2026-045", "procurement"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
       "forbidden_patterns": ["Dear Maria", "Sincerely", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Relationship shift test. Early formal style calibrated to semi-formal. Recent emails should dominate via time decay."
+      "reviewer_notes": "Relationship shift: Q1 emails used 'Dear Maria,'/'Sincerely', recent calibrated emails use 'Hi Maria,'/'Best, Alex'."
     },
     {
       "id": "post_edit_rule_adherence_001",
@@ -384,13 +384,13 @@
       "to": ["sam.park@vertex.ai"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Write a follow-up email. The user previously edited out 'I hope this email finds you well' - this rule is now global. Verify it doesn't appear.",
+      "task_prompt": "Send a brief check-in confirming the Vertex staging rollout date remains Friday and ask him to confirm once the load test passes.",
       "incoming_context": null,
-      "required_facts": ["follow-up", "rule: never use 'I hope this email finds you well'", "global learned rule"],
+      "required_facts": ["Vertex", "Friday", "load test"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
-      "forbidden_patterns": ["I hope this email finds you well", "**", "{first_name}"],
-      "reviewer_notes": "Global rule from edit: never use 'I hope this email finds you well'. Should be suppressed in all audiences."
+      "forbidden_patterns": ["I hope this email finds you well", "deadline", "**", "{first_name}"],
+      "reviewer_notes": "Tests global learned rules: never use 'I hope this email finds you well', use 'ship date' not 'deadline', and no emojis/exclamation marks."
     },
     {
       "id": "post_edit_rule_adherence_002",
@@ -398,13 +398,13 @@
       "to": ["maria.santos@acme-corp.com"],
       "cc": [],
       "bcc": [],
-      "task_prompt": "Send proposal with PO number in subject line. User's edit added 'PO #ACME-2026-045' to subject - this rule is recipient-specific for Maria.",
-      "incoming_context": null,
-      "required_facts": ["proposal", "PO #ACME-2026-045 in subject", "recipient-specific rule for Maria"],
+      "task_prompt": "Confirm delivery of the Week 1 offline evaluation suite and remind her that billing aligns with the milestone schedule.",
+      "incoming_context": "From: Maria Santos <maria.santos@acme-corp.com>\nSubject: Re: Week 1 handoff - PO #ACME-2026-045\n\nHi Alex, can you confirm delivery status for our procurement log?",
+      "required_facts": ["Week 1", "offline evaluation suite", "PO #ACME-2026-045"],
       "expected_audience": "1on1_private",
       "expected_confidence": "high",
-      "forbidden_patterns": ["**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Recipient-specific rule for Maria: always include PO number in subject. Should appear in 1:1 but not leak to group/broadcast."
+      "forbidden_patterns": ["Hey Maria", "Cheers", "**", "{first_name}", "I hope this email finds you well"],
+      "reviewer_notes": "Tests Maria's recipient rule ('Always include PO number in subject when applicable' / referencing PO #ACME-2026-045) + formal procurement register."
     },
     {
       "id": "post_edit_rule_adherence_003",
@@ -412,13 +412,13 @@
       "to": ["elena.rossi@designstudio.agency"],
       "cc": ["david.kumar@partnerco.com"],
       "bcc": [],
-      "task_prompt": "Creative collab email with partner CC'd. User's edit established 'Figma links and Loom videos welcome' for Elena. Verify rule applies to Elena but suppressed for group CC.",
+      "task_prompt": "Share feedback on the joint partner portal mockups: the cobalt palette passes WCAG AA contrast and the hero WebP crops are ready. David Kumar is CC'd for partner alignment.",
       "incoming_context": null,
-      "required_facts": ["creative collab", "Figma links welcome", "Loom videos welcome", "Elena-specific rule", "David CC'd"],
+      "required_facts": ["partner portal", "cobalt", "WCAG AA", "WebP", "David"],
       "expected_audience": "group_cc",
       "expected_confidence": "low",
-      "forbidden_patterns": ["Hey Elena", "Talk soon", "**", "{first_name}", "I hope this email finds you well"],
-      "reviewer_notes": "Elena-specific casual rule should be suppressed in group_cc. Professional baseline for CC context."
+      "forbidden_patterns": ["Hey Elena", "Talk soon", "Cheers", "**", "{first_name}", "I hope this email finds you well"],
+      "reviewer_notes": "Elena's casual 1:1 rule must be suppressed in group_cc when partner David is CC'd; professional baseline applies."
     }
   ]
 }

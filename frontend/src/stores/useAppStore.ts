@@ -1,6 +1,14 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Account, ChatMessage, RecipientContact, Session, UserStyleProfile } from '@/types'
+import type {
+  Account,
+  ChatMessage,
+  InboxThreadDetail,
+  InboxThreadSummary,
+  RecipientContact,
+  Session,
+  UserStyleProfile,
+} from '@/types'
 import { api } from '@/lib/api'
 import { useDraftState } from '@/hooks/useDraftState'
 import { useComposerBus } from '@/stores/useComposerBus'
@@ -17,6 +25,12 @@ interface AppState {
   styleProfile: UserStyleProfile | null
   sidebarCollapsed: boolean
   autoSend: boolean
+  inboxThreads: InboxThreadSummary[]
+  inboxLoading: boolean
+  inboxError: string | null
+  selectedThreadId: string | null
+  activeThread: InboxThreadDetail | null
+  threadLoading: boolean
   setAccounts: (accounts: Account[], activeAccountId: string | null) => void
   updateAccount: (account: Account) => void
   setActiveAccount: (id: string) => Promise<void>
@@ -35,6 +49,9 @@ interface AppState {
   setMessages: (messages: ChatMessage[]) => void
   setContacts: (contacts: RecipientContact[]) => void
   setStyleProfile: (profile: UserStyleProfile | null) => void
+  loadInboxThreads: (limit?: number) => Promise<void>
+  selectInboxThread: (threadId: string) => Promise<void>
+  clearInbox: () => void
   clearAccountState: () => void
 }
 
@@ -43,13 +60,35 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       accounts: [], activeAccountId: null, sessions: [], activeSessionId: null, messages: [], contacts: [], styleProfile: null,
       sidebarCollapsed: false, autoSend: false,
+      inboxThreads: [], inboxLoading: false, inboxError: null, selectedThreadId: null, activeThread: null, threadLoading: false,
+      clearInbox: () => set({
+        inboxThreads: [],
+        inboxLoading: false,
+        inboxError: null,
+        selectedThreadId: null,
+        activeThread: null,
+        threadLoading: false,
+      }),
       clearAccountState: () => {
-        // Strict isolation: wipe sessions, drafts, contacts, toasts and overlays.
+        // Strict isolation: wipe sessions, drafts, contacts, inbox threads, toasts and overlays.
         useDraftState.getState().reset()
         useToastStore.getState().clear()
         useWorkspaceUI.getState().closeAll()
+        useWorkspaceUI.getState().setRailMode('compose')
         useComposerBus.setState({ request: null })
-        set({ sessions: [], activeSessionId: null, messages: [], contacts: [], styleProfile: null })
+        set({
+          sessions: [],
+          activeSessionId: null,
+          messages: [],
+          contacts: [],
+          styleProfile: null,
+          inboxThreads: [],
+          inboxLoading: false,
+          inboxError: null,
+          selectedThreadId: null,
+          activeThread: null,
+          threadLoading: false,
+        })
       },
       setAccounts: (accounts, activeAccountId) => set({ accounts, activeAccountId }),
       updateAccount: (account) => set((state) => ({
@@ -135,6 +174,38 @@ export const useAppStore = create<AppState>()(
           const activeSessionId = state.activeSessionId === id ? (sessions[0]?.id ?? null) : state.activeSessionId
           return { sessions, activeSessionId, messages: state.activeSessionId === id ? [] : state.messages }
         })
+      },
+      loadInboxThreads: async (limit = 25) => {
+        const accountId = get().activeAccountId
+        if (!accountId) return
+        set({ inboxLoading: true, inboxError: null })
+        try {
+          const { threads } = await api.listInboxThreads(limit, accountId)
+          if (get().activeAccountId !== accountId) return
+          set({ inboxThreads: threads, inboxLoading: false })
+        } catch (err) {
+          if (get().activeAccountId !== accountId) return
+          set({
+            inboxLoading: false,
+            inboxError: err instanceof Error ? err.message : 'Unable to fetch inbox threads.',
+          })
+        }
+      },
+      selectInboxThread: async (threadId) => {
+        const accountId = get().activeAccountId
+        if (!accountId) return
+        set({ selectedThreadId: threadId, threadLoading: true, inboxError: null })
+        try {
+          const detail = await api.getInboxThread(threadId, accountId)
+          if (get().activeAccountId !== accountId || get().selectedThreadId !== threadId) return
+          set({ activeThread: detail, threadLoading: false })
+        } catch (err) {
+          if (get().activeAccountId !== accountId || get().selectedThreadId !== threadId) return
+          set({
+            threadLoading: false,
+            inboxError: err instanceof Error ? err.message : 'Unable to load thread.',
+          })
+        }
       },
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
       setAutoSend: (autoSend) => set({ autoSend }),

@@ -9,10 +9,13 @@ import type {
   DraftWarning,
   EmailDraft,
   HealthReport,
+  InboxThreadDetail,
+  InboxThreadSummary,
   OnboardingStatus,
   Provider,
   RecipientContact,
   RelationshipTier,
+  ReplyMode,
   Session,
   UserStyleProfile,
 } from '@/types'
@@ -528,5 +531,33 @@ export const api = {
       accountId,
     })
     return { deleted: Boolean(result.deleted), session_id: result.session_id ?? id }
+  },
+
+  /* ── Read-only Inbox threads & manual reply drafting ───────────────────── */
+
+  listInboxThreads: async (limit = 25, accountId?: string, signal?: AbortSignal): Promise<{ threads: InboxThreadSummary[] }> => {
+    const raw = asRecord(await request<unknown>(`/inbox/threads?limit=${encodeURIComponent(limit)}`, { accountId, signal }))
+    const threads = Array.isArray(raw.threads) ? (raw.threads as InboxThreadSummary[]) : []
+    return { threads }
+  },
+
+  getInboxThread: async (threadId: string, accountId?: string, signal?: AbortSignal): Promise<InboxThreadDetail> => {
+    return request<InboxThreadDetail>(`/inbox/threads/${encodeURIComponent(threadId)}`, { accountId, signal })
+  },
+
+  draftInboxReply: async (
+    threadId: string,
+    payload: { reply_mode: ReplyMode; instruction?: string },
+    accountId?: string,
+    signal?: AbortSignal,
+  ): Promise<EmailDraft> => {
+    const raw = await request<unknown>(`/inbox/threads/${encodeURIComponent(threadId)}/draft-reply`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      accountId,
+      signal,
+    })
+    const rec = asRecord(raw)
+    return normalizeEmailDraft(rec, asString(rec.review_reason))
   },
 }
