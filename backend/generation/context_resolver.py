@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from backend.generation.confidence import assess_personalization_confidence
+
 AUDIENCE_1ON1 = "1on1_private"
 AUDIENCE_GROUP = "group_cc"
 AUDIENCE_BROADCAST = "broadcast_bcc"
@@ -280,7 +282,20 @@ def resolve_draft_context(
     policy_directives.extend(audience_directives)
     applied_rules.extend(audience_directives)
 
-    # --- Tier 3: recipient rules, filtered against Tier 1/2 ----------------
+    # --- Confidence assessment (Layer 4C) ----------------------------------
+    confidence = assess_personalization_confidence(
+        retrieved_emails=retrieved_emails,
+        audience_type=audience,
+        account_id=account_id,
+    )
+    conf_level = confidence["level"]
+
+    if conf_level == "low" and audience == AUDIENCE_1ON1:
+        # Fall back to clean professional baseline greeting/sign-off
+        greeting = f"Hi {first_name}," if first_name else "Hello,"
+        signoff = global_signoff or "Best regards"
+
+    # --- Tier 3: recipient rules, filtered against Tier 1/2 & confidence ---
     for rule in recipient_rules:
         if audience == AUDIENCE_BROADCAST:
             suppressed_rules.append(rule)
@@ -291,6 +306,9 @@ def resolve_draft_context(
         elif tier1_register == "formal" and _is_casual_rule(rule):
             suppressed_rules.append(rule)
             policy_directives.append(f"Suppressed casual recipient rule (Tier 1 formal override): {rule}")
+        elif conf_level == "low" and _is_casual_rule(rule):
+            suppressed_rules.append(f"{rule} (low_confidence_fallback)")
+            policy_directives.append(f"Suppressed casual recipient rule (low_confidence_fallback): {rule}")
         else:
             applied_rules.append(f"Recipient rule for {primary or 'primary recipient'}: {rule}")
 
@@ -314,19 +332,24 @@ def resolve_draft_context(
         if _example_audience(example) == audience:
             matched_examples.append(example)
 
-    # --- Tier 6: cold-start professional baseline --------------------------
-    cold_start_fallback = audience in (AUDIENCE_GROUP, AUDIENCE_BROADCAST) and not matched_examples
-    if cold_start_fallback:
+    # --- Tier 6: confidence-aware & cold-start professional baseline -------
+    cold_start_fallback = (conf_level == "low") or (
+        audience in (AUDIENCE_GROUP, AUDIENCE_BROADCAST) and not matched_examples
+    )
+    if conf_level == "low":
         policy_directives.append(
-            "COLD-START FALLBACK: No historical example matches this audience. "
-            "Use the user's formal global style card and a clean professional baseline. "
-            "Never fall back to casual 1:1_private examples."
+            "Evidence for this recipient/audience is low — write in a clear, polite professional baseline matching the user's global style rather than assuming casual rapport."
         )
         applied_rules.append(
             "Cold-start professional baseline: concise, inclusive, factual prose "
             "with no casual 1:1 shorthand."
         )
         examples: list[dict[str, Any]] = []
+    elif conf_level == "medium":
+        policy_directives.append(
+            "Evidence for this recipient/audience is moderate — apply compatible rules conservatively and do not over-index on a single or stale example."
+        )
+        examples = matched_examples
     else:
         examples = matched_examples
 
@@ -339,6 +362,7 @@ def resolve_draft_context(
         "suppressed_rules": suppressed_rules,
         "examples": examples,
         "cold_start_fallback": cold_start_fallback,
+        "confidence": confidence,
         "policy_directives": policy_directives,
         "resolution_meta": {
             "account_id": str(account_id),
@@ -353,6 +377,7 @@ def resolve_draft_context(
             "examples_received": len(retrieved_emails or []),
             "examples_matched": len(examples),
             "cold_start_fallback": cold_start_fallback,
+            "confidence": confidence,
         },
     }
 

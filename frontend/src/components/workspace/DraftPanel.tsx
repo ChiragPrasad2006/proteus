@@ -402,6 +402,23 @@ export function DraftPanel({ onClose }: DraftPanelProps) {
             <dl className="space-y-1 px-5 pb-4 font-mono text-[12px] text-ink-muted">
               <div className="flex gap-2"><dt className="shrink-0">model</dt><dd className="truncate text-ink">{draft.modelUsed || 'qwen3:8b'}</dd></div>
               <div className="flex gap-2"><dt className="shrink-0">audience</dt><dd className="truncate text-ink">{audience.mode}</dd></div>
+              {(() => {
+                const conf = (draft.resolutionMeta as { confidence?: { level?: string; signals?: { audience_matched_count?: number; newest_age_days?: number | null } } } | undefined)?.confidence
+                if (!conf?.level) return null
+                const levelLabel = conf.level === 'high' ? 'High' : conf.level === 'medium' ? 'Medium' : 'Low'
+                const levelColor = conf.level === 'high' ? 'text-[var(--foam-ink)]' : conf.level === 'low' ? 'text-[var(--ember-ink)]' : 'text-[var(--ink)]'
+                const matched = conf.signals?.audience_matched_count ?? 0
+                const newest = conf.signals?.newest_age_days
+                const summary = conf.level === 'low'
+                  ? 'Low evidence — using global professional baseline'
+                  : `${matched} audience-matched example${matched === 1 ? '' : 's'}${newest != null ? ` · newest ${Math.round(newest)}d ago` : ''}`
+                return (
+                  <>
+                    <div className="flex gap-2"><dt className="shrink-0">confidence</dt><dd className={cn('font-medium', levelColor)}>{levelLabel}</dd></div>
+                    <div className="flex gap-2"><dt className="shrink-0">evidence</dt><dd className="truncate text-ink">{summary}</dd></div>
+                  </>
+                )
+              })()}
               {draft.resolutionMeta?.cold_start_fallback ? (
                 <div className="flex gap-2"><dt className="shrink-0">baseline</dt><dd>formal cold-start (no matching examples)</dd></div>
               ) : null}

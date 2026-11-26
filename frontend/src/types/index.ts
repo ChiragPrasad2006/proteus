@@ -152,7 +152,28 @@ export interface EmailDraft {
   resolutionMeta?: Record<string, unknown>
 }
 
+export interface PersonalizationConfidence {
+  level: 'high' | 'medium' | 'low'
+  reason?: string
+  fallback_applied?: boolean
+  signals?: {
+    usable_example_count?: number
+    audience_matched_count?: number
+    audience_mismatched_count?: number
+    top_similarity?: number | null
+    avg_similarity?: number | null
+    newest_age_days?: number | null
+    median_age_days?: number | null
+  }
+}
+
+export interface ResolutionMeta extends Record<string, unknown> {
+  confidence?: PersonalizationConfidence
+  cold_start_fallback?: boolean
+}
+
 export type MessageRole = 'user' | 'assistant'
+
 
 /**
  * Assistant-only: emitted when the agent cannot confidently resolve a name
