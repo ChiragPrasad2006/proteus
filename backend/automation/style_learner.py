@@ -180,6 +180,11 @@ Retire any conflicting older rule when adding a new one."""
 
             # Clean up pending draft
             self.store.delete_pending_draft(request.draft_id)
+            self.store.record_pilot_event(
+                "draft_sent",
+                audience_type=str(pending.get("audience_type") or audience_mode),
+                draft_id=request.draft_id,
+            )
 
             return ApproveAndLearnResponse(
                 status="SENT",

@@ -16,6 +16,7 @@ import type {
   RecipientContact,
   RelationshipTier,
   ReplyMode,
+  ResolutionMeta,
   Session,
   UserStyleProfile,
 } from '@/types'
@@ -408,7 +409,7 @@ export const api = {
     subject: string
     body: string
     audience_type: AudienceMode
-    resolution_meta: Record<string, unknown>
+    resolution_meta: ResolutionMeta
   }> => {
     const raw = asRecord(await request<unknown>('/draft/tweak', {
       method: 'POST',

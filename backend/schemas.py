@@ -533,3 +533,43 @@ class DraftReplyResponse(StrictModel):
     model_used: str = ""
     review_reason: str = ""
     warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# --- Pre-send Explainability & Local-Only Pilot Metrics ---
+class SuppressedRuleExplainability(StrictModel):
+    rule: str
+    reason: str
+
+
+class ExplainabilityPayload(StrictModel):
+    audience_type: AudienceMode
+    audience_label: Literal["1:1 Private", "Group CC", "Broadcast BCC"]
+    audience_reason: str
+    confidence_level: Literal["high", "medium", "low"]
+    retrieved_examples_count: int = Field(ge=0)
+    retrieved_examples_summary: str
+    recipient_rules_used: list[str] = Field(default_factory=list)
+    global_rules_used: list[str] = Field(default_factory=list)
+    suppressed_rules: list[SuppressedRuleExplainability] = Field(default_factory=list)
+    default_style_used: bool = False
+    default_style_reason: str | None = None
+
+
+class PilotMetricsResponse(StrictModel):
+    """Strictly local, account-scoped aggregate counts with zero email content or PII."""
+
+    total_drafts_generated: int = Field(default=0, ge=0)
+    inbox_replies_drafted: int = Field(default=0, ge=0)
+    drafts_refined: int = Field(default=0, ge=0)
+    drafts_sent: int = Field(default=0, ge=0)
+    drafts_discarded: int = Field(default=0, ge=0)
+    active_days: int = Field(default=0, ge=0)
+    active_dates: list[str] = Field(default_factory=list)
+    learned_rules_count: int = Field(default=0, ge=0)
+    audience_breakdown: dict[AudienceMode, int] = Field(
+        default_factory=lambda: {
+            "1on1_private": 0,
+            "group_cc": 0,
+            "broadcast_bcc": 0,
+        }
+    )

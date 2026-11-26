@@ -16,7 +16,7 @@
  * auto-send acknowledgement) — they are not server state.
  */
 
-import type { AudienceMode, Session, UserStyleProfile } from '@/types'
+import type { AudienceMode, PilotMetrics, ResolutionMeta, Session, UserStyleProfile } from '@/types'
 
 const BASE = '/api'
 
@@ -151,13 +151,13 @@ export async function saveDraftEdits(
   draft_id: string
   updated_at: string
   audience_type?: AudienceMode
-  resolution_meta?: Record<string, unknown>
+  resolution_meta?: ResolutionMeta
 }> {
   return request<{
     draft_id: string
     updated_at: string
     audience_type?: AudienceMode
-    resolution_meta?: Record<string, unknown>
+    resolution_meta?: ResolutionMeta
   }>(`/draft/${encodeURIComponent(draftId)}`, {
     method: 'PATCH',
     body: JSON.stringify(edits),
@@ -171,6 +171,11 @@ export async function discardDraft(accountId: string, draftId: string): Promise<
     method: 'DELETE',
     accountId,
   })
+}
+
+/** Fetch strictly local, PII-free aggregate usage counts for the active account. */
+export async function getPilotMetrics(accountId: string): Promise<PilotMetrics> {
+  return request<PilotMetrics>('/pilot/metrics', { accountId })
 }
 
 /* ── Device-local UI preferences (not server state) ──────────────────────── */

@@ -200,6 +200,9 @@ def resolve_draft_context(
 
     applied_rules: list[str] = []
     suppressed_rules: list[str] = []
+    suppressed_rules_detail: list[dict[str, str]] = []
+    recipient_rules_used: list[str] = []
+    global_rules_used: list[str] = []
     policy_directives: list[str] = []
 
     # --- Tier 1: explicit current instruction ------------------------------
@@ -299,25 +302,52 @@ def resolve_draft_context(
     for rule in recipient_rules:
         if audience == AUDIENCE_BROADCAST:
             suppressed_rules.append(rule)
+            suppressed_rules_detail.append({
+                "rule": rule,
+                "reason": "Suppressed because Broadcast BCC hides recipients and uses a formal, impersonal tone.",
+            })
             policy_directives.append(f"Suppressed recipient rule (broadcast policy): {rule}")
         elif audience == AUDIENCE_GROUP and _is_casual_rule(rule):
             suppressed_rules.append(rule)
+            reason = (
+                "Casual 1:1 rule suppressed because Cc recipients are present."
+                if normalized_cc
+                else "Casual 1:1 rule suppressed because multiple recipients are on this Group CC email."
+            )
+            suppressed_rules_detail.append({"rule": rule, "reason": reason})
             policy_directives.append(f"Suppressed casual 1:1 recipient rule (group policy): {rule}")
         elif tier1_register == "formal" and _is_casual_rule(rule):
             suppressed_rules.append(rule)
+            suppressed_rules_detail.append({
+                "rule": rule,
+                "reason": "Casual rule suppressed because your current instruction requested a formal tone.",
+            })
             policy_directives.append(f"Suppressed casual recipient rule (Tier 1 formal override): {rule}")
         elif conf_level == "low" and _is_casual_rule(rule):
             suppressed_rules.append(f"{rule} (low_confidence_fallback)")
+            suppressed_rules_detail.append({
+                "rule": rule,
+                "reason": "Casual rule suppressed due to low historical evidence for this recipient/audience.",
+            })
             policy_directives.append(f"Suppressed casual recipient rule (low_confidence_fallback): {rule}")
         else:
+            recipient_rules_used.append(rule)
             applied_rules.append(f"Recipient rule for {primary or 'primary recipient'}: {rule}")
 
     # --- Tier 4: global rules and style card -------------------------------
     for rule in global_rules:
         if _is_casual_rule(rule) and (tier1_register == "formal" or audience != AUDIENCE_1ON1):
             suppressed_rules.append(rule)
+            if tier1_register == "formal":
+                reason = "Casual global rule suppressed because your current instruction requested a formal tone."
+            elif audience == AUDIENCE_BROADCAST:
+                reason = "Casual global rule suppressed because Broadcast BCC uses a formal, impersonal tone."
+            else:
+                reason = "Casual global rule suppressed because Group CC emails stay professional."
+            suppressed_rules_detail.append({"rule": rule, "reason": reason})
             policy_directives.append(f"Suppressed conflicting global rule: {rule}")
         else:
+            global_rules_used.append(rule)
             applied_rules.append(f"Global rule: {rule}")
     card_rules = _style_card_rules(style_card)
     if card_rules:
@@ -353,6 +383,107 @@ def resolve_draft_context(
     else:
         examples = matched_examples
 
+    # --- Explainability payload (Layer 4D) ---------------------------------
+    audience_labels = {
+        AUDIENCE_1ON1: "1:1 Private",
+        AUDIENCE_GROUP: "Group CC",
+        AUDIENCE_BROADCAST: "Broadcast BCC",
+    }
+    if audience == AUDIENCE_BROADCAST:
+        bcc_n = len(normalized_bcc)
+        audience_reason = (
+            f"{bcc_n} Bcc recipient{'s' if bcc_n != 1 else ''} detected"
+            if bcc_n > 0
+            else "Bcc recipients detected"
+        )
+    elif audience == AUDIENCE_GROUP:
+        if normalized_cc and len(normalized_to) > 1:
+            audience_reason = f"{len(normalized_to)} recipients in To and {len(normalized_cc)} in Cc"
+        elif normalized_cc:
+            cc_n = len(normalized_cc)
+            audience_reason = f"{cc_n} Cc recipient{'s' if cc_n != 1 else ''} detected"
+        else:
+            audience_reason = f"{len(normalized_to)} recipients in To, no Bcc"
+    else:
+        audience_reason = (
+            "1 recipient in To, no Cc/Bcc"
+            if len(normalized_to) == 1
+            else "No Cc/Bcc recipients detected"
+        )
+
+    signals = confidence.get("signals") or {}
+    usable_count = int(signals.get("usable_example_count") or 0)
+    matched_raw_count = int(signals.get("audience_matched_count") or 0)
+    if usable_count > 0:
+        if audience == AUDIENCE_GROUP:
+            retrieved_examples_summary = (
+                f"{usable_count} relevant group conversation{'s' if usable_count != 1 else ''} retrieved"
+            )
+        elif audience == AUDIENCE_BROADCAST:
+            retrieved_examples_summary = (
+                f"{usable_count} relevant broadcast email{'s' if usable_count != 1 else ''} retrieved"
+            )
+        else:
+            retrieved_examples_summary = (
+                f"{usable_count} relevant 1:1 conversation{'s' if usable_count != 1 else ''} retrieved"
+            )
+    elif matched_raw_count > 0:
+        if audience == AUDIENCE_GROUP:
+            retrieved_examples_summary = "Prior group conversations had low relevance"
+        elif audience == AUDIENCE_BROADCAST:
+            retrieved_examples_summary = "Prior broadcast emails had low relevance"
+        else:
+            retrieved_examples_summary = "Prior 1:1 conversations had low relevance"
+    else:
+        if audience == AUDIENCE_GROUP:
+            retrieved_examples_summary = "No prior group conversations found"
+        elif audience == AUDIENCE_BROADCAST:
+            retrieved_examples_summary = "No prior broadcast emails found"
+        else:
+            retrieved_examples_summary = "No prior 1:1 conversations found"
+
+    default_style_reason: str | None = None
+    if cold_start_fallback:
+        has_suppressed = len(suppressed_rules_detail) > 0
+        if audience == AUDIENCE_GROUP and usable_count == 0:
+            default_style_reason = (
+                "No prior Group CC emails found; casual 1:1 rules suppressed and global professional style applied."
+                if has_suppressed
+                else "No prior Group CC emails found; global professional style applied."
+            )
+        elif audience == AUDIENCE_BROADCAST and usable_count == 0:
+            default_style_reason = (
+                "No prior Broadcast BCC emails found; 1:1 recipient rules suppressed and global professional style applied."
+                if has_suppressed
+                else "No prior Broadcast BCC emails found; global professional style applied."
+            )
+        elif matched_raw_count == 0:
+            default_style_reason = (
+                "No prior matching emails found for this recipient/audience; casual rules suppressed and global professional style applied."
+                if has_suppressed
+                else "No prior matching emails found for this recipient/audience; global professional style applied."
+            )
+        else:
+            default_style_reason = (
+                "Retrieved examples had low relevance; casual rules suppressed and global professional style applied."
+                if has_suppressed
+                else "Retrieved examples had low relevance; global professional style applied."
+            )
+
+    explainability: dict[str, Any] = {
+        "audience_type": audience,
+        "audience_label": audience_labels[audience],
+        "audience_reason": audience_reason,
+        "confidence_level": conf_level,
+        "retrieved_examples_count": usable_count,
+        "retrieved_examples_summary": retrieved_examples_summary,
+        "recipient_rules_used": list(recipient_rules_used),
+        "global_rules_used": list(global_rules_used),
+        "suppressed_rules": list(suppressed_rules_detail),
+        "default_style_used": cold_start_fallback,
+        "default_style_reason": default_style_reason,
+    }
+
     return {
         "audience_type": audience,
         "greeting": greeting,
@@ -378,6 +509,7 @@ def resolve_draft_context(
             "examples_matched": len(examples),
             "cold_start_fallback": cold_start_fallback,
             "confidence": confidence,
+            "explainability": explainability,
         },
     }
 

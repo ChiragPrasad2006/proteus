@@ -1,5 +1,6 @@
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Redo2, Send, Undo2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ExplainabilityCard } from '@/components/workspace/ExplainabilityCard'
 import { RecipientInput } from '@/components/workspace/RecipientInput'
 import { RefineBar } from '@/components/workspace/RefineBar'
 import { StatusBadge } from '@/components/workspace/StatusBadge'
@@ -225,6 +226,11 @@ export function DraftPanel({ onClose }: DraftPanelProps) {
             placeholder="Subject line"
             className="w-full whitespace-nowrap rounded-card border border-ink-hairline bg-white/30 px-3.5 py-2.5 text-[14px] font-medium text-ink placeholder:text-ink-faint focus:border-ink/60 focus:outline-none disabled:opacity-60"
           />
+        </div>
+
+        {/* Pre-send Personalization Explainability (Layer 4D) */}
+        <div className="px-5 pt-4">
+          <ExplainabilityCard draft={draft} />
         </div>
 
         {/* Body */}

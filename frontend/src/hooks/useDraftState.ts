@@ -14,7 +14,7 @@ import { api } from '@/lib/api'
 import { discardDraft, saveDraftEdits } from '@/lib/localAdapter'
 import { audienceFor, friendlyName, unifiedFromWire } from '@/lib/status'
 import { toast } from '@/stores/useToastStore'
-import type { EmailDraft, LearnedRule, UnifiedDraftStatus, WorkspaceDraft } from '@/types'
+import type { EmailDraft, LearnedRule, ResolutionMeta, UnifiedDraftStatus, WorkspaceDraft } from '@/types'
 import { uid } from '@/lib/utils'
 
 export const SEND_COUNTDOWN_SECONDS = 10
@@ -249,7 +249,7 @@ export const useDraftState = create<DraftState>((set, get) => {
       const draft = get().drafts[draftId]
       if (!draft || draft.status === 'sent' || IN_FLIGHT.includes(draft.status)) return
       let savedAudience = audienceFor(draft.to, draft.cc, draft.bcc).mode
-      let savedMeta: Record<string, unknown> | undefined
+      let savedMeta: ResolutionMeta | undefined
       try {
         const result = await saveDraftEdits(draft.accountId, draftId, {
           to: draft.to,

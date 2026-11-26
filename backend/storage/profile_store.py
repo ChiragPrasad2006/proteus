@@ -71,6 +71,15 @@ class ProfileStore:
                     audience_type TEXT NOT NULL DEFAULT '1on1_private',
                     resolution_meta_json TEXT NOT NULL DEFAULT '{}'
                 );
+                CREATE TABLE IF NOT EXISTS pilot_events (
+                    event_id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    audience_type TEXT NOT NULL DEFAULT '1on1_private',
+                    draft_id TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_pilot_events_type
+                    ON pilot_events(event_type, created_at);
                 """
             )
             # Idempotent migrations for existing databases
@@ -446,3 +455,150 @@ class ProfileStore:
         with sqlite3.connect(self.settings.sqlite_path) as connection:
             cursor = connection.execute("DELETE FROM pending_drafts WHERE draft_id = ?", (draft_id,))
             return cursor.rowcount > 0
+
+    # --- local-only pilot metrics (zero PII / zero email text) -------------
+    def record_pilot_event(
+        self,
+        event_type: str,
+        audience_type: str = "1on1_private",
+        draft_id: str | None = None,
+        created_at: str | None = None,
+    ) -> None:
+        """Record an anonymous local lifecycle count in SQLite (no content/PII)."""
+        import uuid
+
+        safe_audience = audience_type if audience_type in ("1on1_private", "group_cc", "broadcast_bcc") else "1on1_private"
+        ts = created_at or datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(self.settings.sqlite_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO pilot_events (event_id, event_type, audience_type, draft_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (str(uuid.uuid4()), event_type, safe_audience, str(draft_id or ""), ts),
+            )
+
+    @staticmethod
+    def _extract_iso_date(value: str | None) -> str | None:
+        raw = str(value or "").strip()
+        if len(raw) >= 10 and raw[4] == "-" and raw[7] == "-":
+            date_part = raw[:10]
+            if date_part.replace("-", "").isdigit():
+                return date_part
+        return None
+
+    def compute_pilot_metrics(self, chat_sessions_path: Path | None = None) -> dict[str, Any]:
+        """Compute account-scoped aggregate counts & dates with zero PII."""
+        breakdown: dict[str, int] = {
+            "1on1_private": 0,
+            "group_cc": 0,
+            "broadcast_bcc": 0,
+        }
+        total_generated = 0
+        inbox_replies = 0
+        drafts_refined = 0
+        drafts_sent = 0
+        drafts_discarded = 0
+        active_dates: set[str] = set()
+        logged_generated_ids: set[str] = set()
+        logged_sent_ids: set[str] = set()
+
+        with sqlite3.connect(self.settings.sqlite_path) as connection:
+            rows = connection.execute(
+                "SELECT event_type, audience_type, draft_id, created_at FROM pilot_events"
+            ).fetchall()
+            for event_type, aud, draft_id, created_at in rows:
+                safe_aud = aud if aud in breakdown else "1on1_private"
+                if day := self._extract_iso_date(created_at):
+                    active_dates.add(day)
+                if event_type == "draft_generated":
+                    total_generated += 1
+                    breakdown[safe_aud] += 1
+                    if draft_id:
+                        logged_generated_ids.add(draft_id)
+                elif event_type == "inbox_reply_drafted":
+                    total_generated += 1
+                    inbox_replies += 1
+                    breakdown[safe_aud] += 1
+                    if draft_id:
+                        logged_generated_ids.add(draft_id)
+                elif event_type == "draft_refined":
+                    drafts_refined += 1
+                elif event_type == "draft_sent":
+                    drafts_sent += 1
+                    if draft_id:
+                        logged_sent_ids.add(draft_id)
+                elif event_type == "draft_discarded":
+                    drafts_discarded += 1
+
+            # Include any unlogged staged pending drafts (e.g., seeded/legacy rows)
+            pending_rows = connection.execute(
+                "SELECT draft_id, request_json, created_at, audience_type FROM pending_drafts"
+            ).fetchall()
+            for draft_id, req_json, created_at, aud in pending_rows:
+                if day := self._extract_iso_date(created_at):
+                    active_dates.add(day)
+                if draft_id and draft_id in logged_generated_ids:
+                    continue
+                safe_aud = aud if aud in breakdown else "1on1_private"
+                total_generated += 1
+                breakdown[safe_aud] += 1
+                if draft_id:
+                    logged_generated_ids.add(draft_id)
+                try:
+                    req = json.loads(req_json or "{}")
+                    if req.get("thread_id") or req.get("reply_mode"):
+                        inbox_replies += 1
+                except (TypeError, ValueError):
+                    pass
+
+        # Read-only inspection of chat_sessions.sqlite3 if present
+        if chat_sessions_path is not None and Path(chat_sessions_path).is_file():
+            with sqlite3.connect(chat_sessions_path) as s_conn:
+                for table, cols in (
+                    ("sessions", "created_at, updated_at"),
+                    ("messages", "created_at"),
+                ):
+                    try:
+                        for row in s_conn.execute(f"SELECT {cols} FROM {table}").fetchall():
+                            for val in row:
+                                if day := self._extract_iso_date(val):
+                                    active_dates.add(day)
+                    except sqlite3.OperationalError:
+                        pass
+                try:
+                    card_cols = {r[1] for r in s_conn.execute("PRAGMA table_info(draft_cards)").fetchall()}
+                    aud_col = "audience_type" if "audience_type" in card_cols else "'1on1_private'"
+                    for card_id, draft_id, status, aud, created_at, updated_at in s_conn.execute(
+                        f"SELECT card_id, draft_id, status, {aud_col}, created_at, updated_at FROM draft_cards"
+                    ).fetchall():
+                        for val in (created_at, updated_at):
+                            if day := self._extract_iso_date(val):
+                                active_dates.add(day)
+                        key = draft_id or card_id
+                        safe_aud = aud if aud in breakdown else "1on1_private"
+                        if key and key not in logged_generated_ids:
+                            total_generated += 1
+                            breakdown[safe_aud] += 1
+                            logged_generated_ids.add(key)
+                        if status == "SENT" and key and key not in logged_sent_ids:
+                            drafts_sent += 1
+                            logged_sent_ids.add(key)
+                except sqlite3.OperationalError:
+                    pass
+
+        profile = self.load_profile()
+        global_rules_cnt = len(profile.global_learned_rules) if profile is not None else 0
+        recipient_rules_cnt = sum(len(rp.learned_rules_json) for rp in self.list_recipient_profiles())
+        sorted_dates = sorted(active_dates)
+        return {
+            "total_drafts_generated": total_generated,
+            "inbox_replies_drafted": inbox_replies,
+            "drafts_refined": drafts_refined,
+            "drafts_sent": drafts_sent,
+            "drafts_discarded": drafts_discarded,
+            "active_days": len(sorted_dates),
+            "active_dates": sorted_dates,
+            "learned_rules_count": global_rules_cnt + recipient_rules_cnt,
+            "audience_breakdown": breakdown,
+        }

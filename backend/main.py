@@ -86,6 +86,7 @@ from backend.schemas import (
     OnboardingRequest,
     OnboardingStatus,
     OutboundEmailRequest,
+    PilotMetricsResponse,
     ProfileRecipientRulesResponse,
     ProfileRuleForgetResponse,
     ProfileRuleResponse,
@@ -953,6 +954,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             audience_type=audience_type, resolution_meta=resolution_meta,
         ):
             raise HTTPException(status_code=404, detail="Pending draft disappeared during revision.")
+        store.record_pilot_event("draft_refined", audience_type=audience_type, draft_id=request.draft_id)
 
         session_store = ChatSessionStore(acc_settings.chat_sessions_path)
         card = session_store.update_draft_card_by_draft_id(
@@ -1433,6 +1435,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store.save_profile(profile)
         return profile
 
+    @app.get("/api/pilot/metrics", response_model=PilotMetricsResponse)
+    def get_pilot_metrics(
+        x_account_id: Annotated[str | None, Header(alias="X-Account-ID")] = None,
+    ) -> PilotMetricsResponse:
+        """Return strictly local, PII-free aggregate usage counts for one account."""
+        if not x_account_id or not x_account_id.strip():
+            raise HTTPException(status_code=400, detail="X-Account-ID header is required.")
+        _, acc_settings = _resolve_account(x_account_id.strip())
+        store = ProfileStore(acc_settings)
+        metrics = store.compute_pilot_metrics(acc_settings.chat_sessions_path)
+        return PilotMetricsResponse(**metrics)
+
     @app.get("/api/contacts")
     def list_contacts(ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx)) -> dict[str, Any]:
         """Return the active account's resolved contacts."""
@@ -1600,6 +1614,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {k: v for k, v in ex.items() if k in RetrievedExample.model_fields}
             for ex in context["examples"][:3]
         ]
+        store.record_pilot_event("draft_generated", audience_type=str(context["audience_type"]))
 
         return DraftResponse(
             draft=draft,
@@ -1645,18 +1660,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             envelope["subject"] = request.subject
         body = request.body if request.body is not None else pending.get("draft", "")
 
-        # Live recipient edits must recompute the audience deterministically so
-        # the pill, the staged draft and the chat snapshot never disagree.
-        audience_type = classify_audience(
-            list(envelope.get("to") or []),
-            list(envelope.get("cc") or []),
-            list(envelope.get("bcc") or []),
+        # Live recipient edits must recompute the audience & explainability
+        # deterministically so the pill, explainability card, staged draft and
+        # chat snapshot never disagree.
+        to_list = [str(item) for item in (envelope.get("to") or []) if str(item).strip()]
+        cc_list = [str(item) for item in (envelope.get("cc") or []) if str(item).strip()]
+        bcc_list = [str(item) for item in (envelope.get("bcc") or []) if str(item).strip()]
+        subject_text = str(envelope.get("subject") or "")
+        context = _build_resolution_context(
+            acc_settings,
+            _resolution_account_id(account, acc_settings),
+            to_list,
+            cc_list,
+            bcc_list,
+            store,
+            query_text=f"{subject_text} {body}".strip(),
+            current_instructions=str(envelope.get("intent_bullets") or ""),
         )
-        resolution_meta = dict(pending.get("resolution_meta") or {})
-        resolution_meta.update({
-            "account_id": _resolution_account_id(account, acc_settings),
-            "audience_type": audience_type,
-        })
+        audience_type = str(context["audience_type"])
+        resolution_meta = dict(context["resolution_meta"])
         envelope["audience_type"] = audience_type
         envelope["resolution_meta"] = resolution_meta
         store.update_pending_draft(
@@ -1695,6 +1717,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pending = store.load_pending_draft(draft_id)
         if pending is None:
             raise HTTPException(status_code=404, detail="Staged draft not found for this account.")
+        store.record_pilot_event(
+            "draft_discarded",
+            audience_type=str(pending.get("audience_type") or "1on1_private"),
+            draft_id=draft_id,
+        )
         store.delete_pending_draft(draft_id)
         sessions = ChatSessionStore(acc_settings.chat_sessions_path)
         sessions.delete_draft_card_by_draft_id(draft_id)
@@ -1985,6 +2012,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     json.dumps(resolution_meta),
                 ),
             )
+        store.record_pilot_event("inbox_reply_drafted", audience_type=audience_type, draft_id=draft_id)
 
         clean_examples = [
             {k: v for k, v in ex.items() if k in RetrievedExample.model_fields}
@@ -2571,8 +2599,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
 
         if status == "SENT":
+            store.record_pilot_event("draft_generated", audience_type=audience_type, draft_id=draft_id or card["card_id"])
+            store.record_pilot_event("draft_sent", audience_type=audience_type, draft_id=draft_id or card["card_id"])
             assistant_message = f"Sent your email to {', '.join(to_emails)}."
         else:
+            store.record_pilot_event("draft_generated", audience_type=audience_type, draft_id=draft_id or card["card_id"])
             assistant_message = (
                 f"Drafted an email to {', '.join(to_emails)} and held it for review: "
                 + "; ".join(review_reasons)

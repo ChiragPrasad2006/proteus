@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { IconButton } from '@/components/ui/IconButton'
 import { api } from '@/lib/api'
-import { forgetRule, listRecipientRules, resetProfile, updateRule, type RecipientRule } from '@/lib/localAdapter'
+import { forgetRule, getPilotMetrics, listRecipientRules, resetProfile, updateRule, type RecipientRule } from '@/lib/localAdapter'
 import { cn } from '@/lib/utils'
 import { useActiveAccount, useAppStore } from '@/stores/useAppStore'
 import { toast } from '@/stores/useToastStore'
@@ -104,6 +104,23 @@ export function StyleProfile() {
     anchor.click()
     URL.revokeObjectURL(url)
     toast('Profile exported as JSON.')
+  }
+
+  const exportPilotMetrics = async () => {
+    if (!accountId) return
+    try {
+      const metrics = await getPilotMetrics(accountId)
+      const blob = new Blob([JSON.stringify(metrics, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = 'proteus-local-usage-metrics.json'
+      anchor.click()
+      URL.revokeObjectURL(url)
+      toast('Local usage metrics exported as JSON.')
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not export local usage metrics.', 'warning', 6000)
+    }
   }
 
   const saveEdit = async (row: RuleRow) => {
@@ -327,12 +344,21 @@ export function StyleProfile() {
             </section>
 
             {/* Export / reset */}
-            <section className="flex items-center gap-2.5 border-t border-ink-hairline pt-5">
-              <button type="button" onClick={exportProfile} className="inline-flex items-center gap-2 rounded-pill border border-ink-hairline px-4 py-2 text-[13px] font-medium text-ink hover:border-ink/50 hover:bg-ink/5">
-                <Download className="h-4 w-4" aria-hidden /> Export profile
-              </button>
-              <button type="button" onClick={() => setResetOpen(true)} className="inline-flex items-center gap-2 rounded-pill border border-ink-hairline px-4 py-2 text-[13px] font-medium text-ink-muted hover:border-ember-ink/60 hover:text-ember-ink">
-                <RotateCcw className="h-4 w-4" aria-hidden /> Reset profile
+            <section className="space-y-2.5 border-t border-ink-hairline pt-5">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button type="button" onClick={exportProfile} className="inline-flex items-center gap-2 rounded-pill border border-ink-hairline px-4 py-2 text-[13px] font-medium text-ink hover:border-ink/50 hover:bg-ink/5">
+                  <Download className="h-4 w-4" aria-hidden /> Export profile
+                </button>
+                <button type="button" onClick={() => setResetOpen(true)} className="inline-flex items-center gap-2 rounded-pill border border-ink-hairline px-4 py-2 text-[13px] font-medium text-ink-muted hover:border-ember-ink/60 hover:text-ember-ink">
+                  <RotateCcw className="h-4 w-4" aria-hidden /> Reset profile
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => void exportPilotMetrics()}
+                className="inline-flex items-center gap-2 rounded-pill border border-ink-hairline px-3.5 py-1.5 text-[12px] text-ink-muted hover:border-ink/50 hover:text-ink"
+              >
+                <Download className="h-3.5 w-3.5" aria-hidden /> Export local usage metrics (JSON)
               </button>
             </section>
           </div>

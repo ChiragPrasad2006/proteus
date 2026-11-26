@@ -168,6 +168,9 @@ class Dispatcher:
 
         # If pending review, save draft to pending queue and return
         if pending_reasons or not request.auto_send:
+            from backend.generation.context_resolver import classify_audience
+
+            aud_mode = classify_audience(to_recipients, cc_recipients, bcc_recipients)
             self._save_pending_draft(
                 draft_id=draft_id,
                 request=request,
@@ -175,6 +178,7 @@ class Dispatcher:
                 profile_id=profile.profile_id,
                 recipient_profiles=recipient_profiles,
             )
+            self.store.record_pilot_event("draft_generated", audience_type=aud_mode, draft_id=draft_id)
             return DispatchResponse(
                 draft_id=draft_id,
                 status="PENDING_REVIEW",
@@ -234,6 +238,8 @@ class Dispatcher:
                 cc_count=len(cc_recipients),
                 bcc_count=len(bcc_recipients),
             )
+            self.store.record_pilot_event("draft_generated", audience_type=audience_mode, draft_id=draft_id)
+            self.store.record_pilot_event("draft_sent", audience_type=audience_mode, draft_id=draft_id)
 
             return DispatchResponse(
                 draft_id=draft_id,

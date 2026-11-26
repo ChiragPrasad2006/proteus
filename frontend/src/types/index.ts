@@ -107,7 +107,7 @@ export interface WorkspaceDraft {
   status: UnifiedDraftStatus
   /** Audience resolved by the backend's deterministic policy layer. */
   audienceType: AudienceMode
-  resolutionMeta?: Record<string, unknown>
+  resolutionMeta?: ResolutionMeta
   /** Raw backend reason — internal only, never rendered verbatim. */
   reviewReason?: string
   modelUsed: string
@@ -149,7 +149,26 @@ export interface EmailDraft {
   reviewReason?: string
   /** Audience resolved by the backend's deterministic policy layer. */
   audienceType?: AudienceMode
-  resolutionMeta?: Record<string, unknown>
+  resolutionMeta?: ResolutionMeta
+}
+
+export interface SuppressedRuleExplainability {
+  rule: string
+  reason: string
+}
+
+export interface ExplainabilityMeta {
+  audience_type: AudienceMode
+  audience_label: '1:1 Private' | 'Group CC' | 'Broadcast BCC'
+  audience_reason: string
+  confidence_level: 'high' | 'medium' | 'low'
+  retrieved_examples_count: number
+  retrieved_examples_summary: string
+  recipient_rules_used: string[]
+  global_rules_used: string[]
+  suppressed_rules: SuppressedRuleExplainability[]
+  default_style_used: boolean
+  default_style_reason: string | null
 }
 
 export interface PersonalizationConfidence {
@@ -170,6 +189,19 @@ export interface PersonalizationConfidence {
 export interface ResolutionMeta extends Record<string, unknown> {
   confidence?: PersonalizationConfidence
   cold_start_fallback?: boolean
+  explainability?: ExplainabilityMeta
+}
+
+export interface PilotMetrics {
+  total_drafts_generated: number
+  inbox_replies_drafted: number
+  drafts_refined: number
+  drafts_sent: number
+  drafts_discarded: number
+  active_days: number
+  active_dates: string[]
+  learned_rules_count: number
+  audience_breakdown: Record<AudienceMode, number>
 }
 
 export type MessageRole = 'user' | 'assistant'
