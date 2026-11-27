@@ -115,7 +115,7 @@ class UserStyleProfile(StrictModel):
 
 
 class OnboardingRequest(StrictModel):
-    provider: Literal["gmail", "outlook", "imap", "mbox"]
+    provider: Literal["gmail", "outlook", "zoho", "imap", "mbox"]
     limit: int = Field(default=300, ge=1, le=500)
     credentials: dict[str, Any] = Field(default_factory=dict)
     file_path: str | None = None
@@ -236,7 +236,7 @@ class SendReceipt(StrictModel):
 class DispatchRequest(StrictModel):
     """Request for autonomous email dispatch with first-recipient gate."""
 
-    provider: Literal["gmail", "outlook", "imap", "demo"]
+    provider: Literal["gmail", "outlook", "zoho", "imap", "demo"]
     to: list[str] = Field(min_length=1)
     cc: list[str] = Field(default_factory=list)
     bcc: list[str] = Field(default_factory=list)
@@ -573,3 +573,54 @@ class PilotMetricsResponse(StrictModel):
             "broadcast_bcc": 0,
         }
     )
+
+
+# --- Outlook (Microsoft Graph OAuth2) & Zoho Mail schemas ---
+ZohoRegion = Literal["in", "com", "eu", "com.au", "jp"]
+
+
+class OutlookOAuthConfigureRequest(StrictModel):
+    client_id: str = Field(min_length=4, max_length=256)
+    client_secret: str = Field(default="", max_length=512)
+    tenant_id: str = Field(default="common", min_length=1, max_length=128)
+
+
+class OutlookOAuthStatusResponse(StrictModel):
+    configured: bool
+    tenant_id: str = "common"
+    has_client_secret: bool = False
+    redirect_uri: str
+    message: str
+
+
+class OutlookAuthStartResponse(StrictModel):
+    auth_url: str
+    state: str
+    redirect_uri: str
+
+
+class ConnectZohoRequest(StrictModel):
+    email: str = Field(min_length=3, max_length=320)
+    display_name: str | None = Field(default=None, max_length=120)
+    app_password: str = Field(min_length=4, max_length=128)
+    region: ZohoRegion = "in"
+    limit: int = Field(default=200, ge=1, le=500)
+
+
+class ZohoOAuthConfigureRequest(StrictModel):
+    client_id: str = Field(min_length=4, max_length=256)
+    client_secret: str = Field(min_length=4, max_length=512)
+    region: ZohoRegion = "in"
+
+
+class ZohoOAuthStatusResponse(StrictModel):
+    configured: bool
+    region: ZohoRegion = "in"
+    redirect_uri: str
+    message: str
+
+
+class ZohoAuthStartResponse(StrictModel):
+    auth_url: str
+    state: str
+    redirect_uri: str

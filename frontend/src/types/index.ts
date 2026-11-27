@@ -3,7 +3,8 @@
  * schemas exposed by `backend/schemas.py` where a wire contract exists.
  */
 
-export type Provider = 'gmail' | 'outlook' | 'imap' | 'mbox' | 'demo'
+export type Provider = 'gmail' | 'outlook' | 'zoho' | 'imap' | 'mbox' | 'demo'
+export type ZohoRegion = 'in' | 'com' | 'eu' | 'com.au' | 'jp'
 
 export type RelationshipTier =
   | 'executive_or_client'

@@ -91,6 +91,16 @@ class Settings:
     google_oauth_port: int = field(
         default_factory=lambda: int(os.getenv("GOOGLE_OAUTH_PORT", "8000"))
     )
+    outlook_oauth_redirect_uri: str = field(
+        default_factory=lambda: os.getenv(
+            "OUTLOOK_OAUTH_REDIRECT_URI", "http://127.0.0.1:8000/api/auth/outlook/callback"
+        )
+    )
+    zoho_oauth_redirect_uri: str = field(
+        default_factory=lambda: os.getenv(
+            "ZOHO_OAUTH_REDIRECT_URI", "http://127.0.0.1:8000/api/auth/zoho/callback"
+        )
+    )
 
     # Frontend URL for redirects after the OAuth callback
     frontend_url: str = field(

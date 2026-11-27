@@ -11,6 +11,7 @@ import imaplib
 import smtplib
 from email.message import EmailMessage
 from email.utils import make_msgid
+from typing import Any
 
 from backend.connectors.base import BaseEmailConnector, ConnectorError
 from backend.connectors.imap_mbox import ImapConnector, email_message_to_raw
@@ -34,6 +35,11 @@ class GmailAppPasswordConnector(BaseEmailConnector):
             raise ConnectorError("A valid Gmail address is required.")
         if len(self.app_password) != 16:
             raise ConnectorError("Google App Passwords must contain exactly 16 characters.")
+
+    def test_connection(self) -> dict[str, Any]:
+        """Unified connector contract check for Gmail IMAP + SMTP."""
+        self.verify_connection()
+        return {"ok": True, "provider": "gmail", "email": self.email}
 
     def verify_connection(self) -> None:
         """Prove that the password can authenticate to both Gmail transports."""
@@ -71,7 +77,7 @@ class GmailAppPasswordConnector(BaseEmailConnector):
                 return mailbox
         raise ConnectorError("Unable to locate Gmail's Sent folder.")
 
-    def fetch_sent_emails(self, limit: int) -> list[RawSentEmail]:
+    def fetch_sent_emails(self, limit: int = 200) -> list[RawSentEmail]:
         """Fetch the most recent messages from Gmail's Sent folder over IMAP SSL."""
         self._validate_inputs()
         try:
@@ -125,37 +131,53 @@ class GmailAppPasswordConnector(BaseEmailConnector):
             smtp_port=self.SMTP_PORT,
         ).fetch_thread_messages(thread_id=thread_id, limit=limit)
 
-    def send_email(self, payload: OutboundEmailRequest) -> SendReceipt:
+    def send_email(
+        self,
+        payload: OutboundEmailRequest | None = None,
+        *,
+        to: list[str] | None = None,
+        subject: str = "",
+        body: str = "",
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        in_reply_to: str | None = None,
+        references: list[str] | None = None,
+        thread_id: str | None = None,
+    ) -> SendReceipt:
         """Send through Gmail SMTP SSL with the account's App Password."""
         self._validate_inputs()
+        req = self._coerce_outbound_request(
+            payload, to=to, subject=subject, body=body, cc=cc, bcc=bcc,
+            in_reply_to=in_reply_to, references=references, thread_id=thread_id,
+        )
         message = EmailMessage()
         message["From"] = self.email
-        message["To"] = ", ".join(payload.to)
-        if payload.cc:
-            message["Cc"] = ", ".join(payload.cc)
-        if payload.bcc:
-            message["Bcc"] = ", ".join(payload.bcc)
-        message["Subject"] = payload.subject
+        message["To"] = ", ".join(req.to)
+        if req.cc:
+            message["Cc"] = ", ".join(req.cc)
+        if req.bcc:
+            message["Bcc"] = ", ".join(req.bcc)
+        message["Subject"] = req.subject
         message["Message-ID"] = make_msgid()
-        if payload.in_reply_to:
-            message["In-Reply-To"] = payload.in_reply_to
-        elif payload.thread_id and str(payload.thread_id).startswith("<"):
-            message["In-Reply-To"] = payload.thread_id
-        if payload.references:
-            message["References"] = " ".join(payload.references)
-        elif payload.thread_id and str(payload.thread_id).startswith("<"):
-            message["References"] = payload.thread_id
-        elif payload.in_reply_to:
-            message["References"] = payload.in_reply_to
-        message.set_content(payload.body, subtype="plain")
+        if req.in_reply_to:
+            message["In-Reply-To"] = req.in_reply_to
+        elif req.thread_id and str(req.thread_id).startswith("<"):
+            message["In-Reply-To"] = req.thread_id
+        if req.references:
+            message["References"] = " ".join(req.references)
+        elif req.thread_id and str(req.thread_id).startswith("<"):
+            message["References"] = req.thread_id
+        elif req.in_reply_to:
+            message["References"] = req.in_reply_to
+        message.set_content(req.body, subtype="plain")
 
         try:
             with smtplib.SMTP_SSL(self.SMTP_HOST, self.SMTP_PORT) as client:
                 client.login(self.email, self.app_password)
-                client.send_message(message, from_addr=self.email, to_addrs=payload.to + payload.cc + payload.bcc)
+                client.send_message(message, from_addr=self.email, to_addrs=req.to + req.cc + req.bcc)
             return SendReceipt(
                 message_id=message["Message-ID"],
-                thread_id=payload.thread_id,
+                thread_id=req.thread_id,
                 status="sent",
             )
         except (smtplib.SMTPException, OSError) as exc:

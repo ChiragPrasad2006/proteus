@@ -30,6 +30,21 @@ SPA_NO_CACHE_HEADERS = {
 from backend.automation import Dispatcher, StyleLearner
 from backend.automation.contact_resolver import Contact, ContactResolver
 from backend.config import Settings
+from backend.auth import (
+    build_outlook_auth_url,
+    build_zoho_auth_url,
+    exchange_outlook_code,
+    exchange_zoho_code,
+    fetch_microsoft_user_info,
+    fetch_zoho_user_info,
+    generate_pkce_pair,
+    load_outlook_oauth_config,
+    load_zoho_oauth_config,
+    save_outlook_oauth_config,
+    save_outlook_tokens,
+    save_zoho_oauth_config,
+    save_zoho_tokens,
+)
 from backend.connectors import (
     ConnectorError,
     GmailAppPasswordConnector,
@@ -37,6 +52,10 @@ from backend.connectors import (
     ImapConnector,
     LocalMailFileConnector,
     OutlookConnector,
+    OutlookGraphConnector,
+    ZohoMailConnector,
+    ZohoOAuthConnector,
+    get_connector_for_account,
 )
 from backend.generation import (
     DrafterUnavailable,
@@ -82,8 +101,15 @@ from backend.schemas import (
     InboxThreadMessage,
     InboxThreadSummary,
     ConnectAppPasswordRequest,
+    ConnectZohoRequest,
     MailboxConnectResponse,
     OnboardingRequest,
+    OutlookAuthStartResponse,
+    OutlookOAuthConfigureRequest,
+    OutlookOAuthStatusResponse,
+    ZohoAuthStartResponse,
+    ZohoOAuthConfigureRequest,
+    ZohoOAuthStatusResponse,
     OnboardingStatus,
     OutboundEmailRequest,
     PilotMetricsResponse,
@@ -568,10 +594,17 @@ def _connector_from_request(request: OnboardingRequest, settings: Settings):
             settings.oauth_token_dir / "gmail_token.json",
         )
     if request.provider == "outlook":
-        return OutlookConnector(
+        return OutlookGraphConnector(
+            access_token=credentials.get("access_token"),
+            acc_settings=settings,
             client_id=str(credentials.get("client_id", "")),
-            token_cache_file=settings.oauth_token_dir / "outlook_token_cache.json",
             tenant_id=str(credentials.get("tenant_id", "common")),
+        )
+    if request.provider == "zoho":
+        return ZohoMailConnector(
+            email_address=str(credentials.get("email", "")),
+            app_password=str(credentials.get("app_password", "")),
+            region=str(credentials.get("region", "in")),
         )
     if request.provider == "imap":
         return ImapConnector(
@@ -810,83 +843,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     def _connector_for_account(acc_settings: Settings):
-        """Prefer the verified local App Password; use Gmail REST only with gmail.send."""
-        app_password_file = acc_settings.local_user_data_dir / "app_password.bin"
-        account = account_manager.get_account(acc_settings.local_user_data_dir.name)
-        if account is None:
-            raise ConnectorError("The selected Gmail account is not registered.")
-        if app_password_file.is_file():
-            try:
-                app_password = reveal_secret(
-                    app_password_file.read_text(encoding="utf-8"),
-                    acc_settings.local_user_data_dir,
-                )
-                if len(app_password) == 16:
-                    return GmailAppPasswordConnector(account.email, app_password)
-            except Exception as exc:
-                raise ConnectorError("The saved Gmail App Password could not be opened; reconnect the mailbox.") from exc
-
-        token_candidates = (
-            acc_settings.oauth_token_dir / "google_identity.json",
-            acc_settings.oauth_token_dir / "gmail_token.json",
-        )
-        for token_file in token_candidates:
-            if not token_file.is_file():
-                continue
-            try:
-                token_data = json.loads(token_file.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            scopes = token_data.get("scopes") or token_data.get("granted_scopes") or []
-            if isinstance(scopes, list) and GMAIL_SEND_SCOPE in scopes:
-                return GmailConnector(
-                    acc_settings.google_client_secrets_file,
-                    token_file,
-                    scopes=[scope for scope in scopes if isinstance(scope, str)],
-                )
-        raise ConnectorError(
-            "This OAuth token lacks gmail.send and no App Password is saved. Unlock the mailbox with a Gmail App Password before sending."
+        """Resolve the outbound/send connector for the account via the central factory."""
+        return get_connector_for_account(
+            acc_settings.local_user_data_dir.name,
+            runtime_settings,
+            account_manager,
+            purpose="send",
         )
 
     def _inbox_connector_for_account(acc_settings: Settings):
-        """Return a read-only inbox connector (Gmail REST with gmail.readonly, else IMAP BODY.PEEK[])."""
-        account = account_manager.get_account(acc_settings.local_user_data_dir.name)
-        if account is None:
-            raise ConnectorError("The selected account is not registered.")
-
-        token_candidates = (
-            acc_settings.oauth_token_dir / "google_identity.json",
-            acc_settings.oauth_token_dir / "gmail_token.json",
-        )
-        for token_file in token_candidates:
-            if not token_file.is_file():
-                continue
-            try:
-                token_data = json.loads(token_file.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            scopes = token_data.get("scopes") or token_data.get("granted_scopes") or []
-            if isinstance(scopes, list) and GMAIL_READONLY_SCOPE in scopes:
-                return GmailConnector(
-                    acc_settings.google_client_secrets_file,
-                    token_file,
-                    scopes=[scope for scope in scopes if isinstance(scope, str)],
-                )
-
-        app_password_file = acc_settings.local_user_data_dir / "app_password.bin"
-        if app_password_file.is_file():
-            try:
-                app_password = reveal_secret(
-                    app_password_file.read_text(encoding="utf-8"),
-                    acc_settings.local_user_data_dir,
-                )
-                if len(app_password) == 16:
-                    return GmailAppPasswordConnector(account.email, app_password)
-            except Exception as exc:
-                raise ConnectorError("The saved Gmail App Password could not be opened; reconnect the mailbox.") from exc
-
-        raise ConnectorError(
-            "Inbox access requires gmail.readonly OAuth scope or an unlocked Gmail App Password."
+        """Resolve the read-only inbox connector for the account via the central factory."""
+        return get_connector_for_account(
+            acc_settings.local_user_data_dir.name,
+            runtime_settings,
+            account_manager,
+            purpose="inbox",
         )
 
     def _revise_staged_draft(
@@ -1261,6 +1232,338 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             clean_emails_retained=status.clean_emails_retained,
             message="Mailbox verified and Sent mail ingestion completed.",
         )
+
+    def _ingest_sent_records(acc_settings: Settings, raw_records: list[RawSentEmail]) -> OnboardingStatus:
+        store = ProfileStore(acc_settings)
+        status = _clean_and_persist(raw_records, store, acc_settings)
+        cleaned = store.load_cleaned_emails()
+        if cleaned:
+            try:
+                metrics = compute_stylometry(cleaned)
+                profile = UserStyleProfile(
+                    profile_id=str(uuid.uuid4()),
+                    created_at=datetime.now(timezone.utc),
+                    deterministic_stylometry=metrics,
+                    global_style_card=QwenStyleProfiler(acc_settings).profile(cleaned, metrics),
+                    corpus_statistics=store.corpus_statistics(cleaned),
+                )
+                store.save_profile(profile)
+            except Exception:
+                pass
+            try:
+                account_embedder = LocalEmbedder()
+                account_embedder.load()
+                LanceDBVectorStore(acc_settings).index_emails(cleaned, account_embedder, force_recreate=True)
+            except Exception:
+                pass
+            try:
+                ContactResolver(acc_settings.contacts_path).rebuild_from_emails(cleaned)
+            except Exception:
+                pass
+        return status
+
+    def _run_connector_ingestion_bg(account_id: str, limit: int = 200) -> None:
+        try:
+            connector = get_connector_for_account(account_id, runtime_settings, account_manager, purpose="sent")
+            raw_records = connector.fetch_sent_emails(limit)
+            _ingest_sent_records(runtime_settings.for_account(account_id), raw_records)
+        except Exception:
+            pass
+
+    # --- Outlook / Microsoft 365 Graph OAuth2 -------------------------------
+    @app.get("/api/auth/outlook/status", response_model=OutlookOAuthStatusResponse)
+    def outlook_auth_status() -> OutlookOAuthStatusResponse:
+        cfg = load_outlook_oauth_config(runtime_settings)
+        redirect_uri = runtime_settings.outlook_oauth_redirect_uri
+        if cfg:
+            return OutlookOAuthStatusResponse(
+                configured=True,
+                tenant_id=cfg.get("tenant_id", "common"),
+                has_client_secret=bool(cfg.get("client_secret")),
+                redirect_uri=redirect_uri,
+                message="Microsoft Outlook OAuth2 is configured.",
+            )
+        return OutlookOAuthStatusResponse(
+            configured=False,
+            tenant_id="common",
+            has_client_secret=False,
+            redirect_uri=redirect_uri,
+            message="Outlook Application (client) ID is not configured yet.",
+        )
+
+    @app.post("/api/auth/outlook/configure", response_model=OutlookOAuthStatusResponse)
+    def outlook_auth_configure(request: OutlookOAuthConfigureRequest) -> OutlookOAuthStatusResponse:
+        try:
+            cfg = save_outlook_oauth_config(
+                runtime_settings,
+                client_id=request.client_id,
+                client_secret=request.client_secret,
+                tenant_id=request.tenant_id,
+            )
+        except ConnectorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return OutlookOAuthStatusResponse(
+            configured=True,
+            tenant_id=cfg["tenant_id"],
+            has_client_secret=bool(cfg.get("client_secret")),
+            redirect_uri=runtime_settings.outlook_oauth_redirect_uri,
+            message="Outlook OAuth2 configuration saved.",
+        )
+
+    @app.post("/api/auth/outlook/start", response_model=OutlookAuthStartResponse)
+    def outlook_auth_start() -> OutlookAuthStartResponse:
+        cfg = load_outlook_oauth_config(runtime_settings)
+        if cfg is None:
+            raise HTTPException(status_code=400, detail="MISSING_OUTLOOK_OAUTH_CONFIG")
+        state = secrets.token_urlsafe(24)
+        code_verifier, code_challenge = generate_pkce_pair()
+        redirect_uri = runtime_settings.outlook_oauth_redirect_uri
+        auth_url = build_outlook_auth_url(cfg, redirect_uri=redirect_uri, state=state, code_challenge=code_challenge)
+        cutoff = time.time() - 900
+        flows = {k: v for k, v in app.state.oauth_flows.items() if v.get("created_at", 0) >= cutoff}
+        flows[state] = {
+            "provider": "outlook",
+            "code_verifier": code_verifier,
+            "redirect_uri": redirect_uri,
+            "created_at": time.time(),
+        }
+        app.state.oauth_flows = flows
+        return OutlookAuthStartResponse(auth_url=auth_url, state=state, redirect_uri=redirect_uri)
+
+    @app.get("/api/auth/outlook/callback")
+    def outlook_auth_callback(
+        background_tasks: BackgroundTasks,
+        code: str | None = None,
+        state: str | None = None,
+        error: str | None = None,
+    ) -> RedirectResponse:
+        frontend = runtime_settings.frontend_url.rstrip("/")
+        if error:
+            return RedirectResponse(url=f"{frontend}/workspace?auth=error&reason={error}")
+        if not code or not state:
+            return RedirectResponse(url=f"{frontend}/workspace?auth=error&reason=missing_code_or_state")
+        pending = app.state.oauth_flows.pop(state, None)
+        if not pending or pending.get("provider") != "outlook":
+            return RedirectResponse(url=f"{frontend}/workspace?auth=error&reason=unknown_or_expired_state")
+        cfg = load_outlook_oauth_config(runtime_settings)
+        if cfg is None:
+            return RedirectResponse(url=f"{frontend}/workspace?auth=error&reason=outlook_config_missing")
+        try:
+            tokens = exchange_outlook_code(
+                cfg,
+                code=code,
+                redirect_uri=str(pending.get("redirect_uri") or runtime_settings.outlook_oauth_redirect_uri),
+                code_verifier=str(pending.get("code_verifier", "")),
+            )
+            me = fetch_microsoft_user_info(str(tokens["access_token"]))
+        except ConnectorError:
+            return RedirectResponse(url=f"{frontend}/workspace?auth=error&reason=outlook_exchange_failed")
+
+        email = str(me.get("mail") or me.get("userPrincipalName") or "").strip().lower()
+        if not email:
+            return RedirectResponse(url=f"{frontend}/workspace?auth=error&reason=no_email_returned")
+        display_name = str(me.get("displayName") or email.split("@")[0])
+
+        existing = account_manager.get_account_by_email(email)
+        if existing is not None:
+            account = account_manager.update_account(
+                existing.account_id,
+                display_name=display_name,
+                provider="outlook",
+                mailbox_connected=True,
+            ) or existing
+        else:
+            account = account_manager.create_account(
+                email=email,
+                display_name=display_name,
+                provider="outlook",
+                mailbox_connected=True,
+            )
+        account_manager.set_active_account(account.account_id)
+        acc_settings = runtime_settings.for_account(account.account_id)
+        save_outlook_tokens(acc_settings, tokens)
+        background_tasks.add_task(_run_connector_ingestion_bg, account.account_id, 200)
+        return RedirectResponse(url=f"{frontend}/workspace?auth=success&account_id={account.account_id}")
+
+    # --- Zoho Mail (App Password default + optional OAuth2) ----------------
+    @app.post("/api/onboarding/connect-zoho", response_model=MailboxConnectResponse)
+    def connect_zoho(
+        request: ConnectZohoRequest,
+        x_account_id: Annotated[str | None, Header(alias="X-Account-ID")] = None,
+    ) -> MailboxConnectResponse:
+        """Validate Zoho IMAP+SMTP (with pro->free fallback), encrypt credentials, and ingest Sent mail."""
+        email = request.email.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise HTTPException(status_code=422, detail="Enter a valid Zoho Mail address.")
+        app_password = request.app_password.strip()
+
+        connector = ZohoMailConnector(email_address=email, app_password=app_password, region=request.region)
+        try:
+            conn_info = connector.test_connection()
+            raw_records = connector.fetch_sent_emails(request.limit)
+        except ConnectorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        account: AccountInfo | None = None
+        if x_account_id:
+            account = account_manager.get_account(x_account_id)
+            if account is None:
+                raise HTTPException(status_code=404, detail=f"Unknown account '{x_account_id}'.")
+            account = account_manager.update_account(
+                account.account_id,
+                email=email,
+                display_name=(request.display_name or account.display_name or email.split("@")[0]).strip(),
+                provider="zoho",
+                mailbox_connected=True,
+            ) or account
+        else:
+            existing = account_manager.get_account_by_email(email)
+            display_name = (request.display_name or email.split("@")[0]).strip()
+            if existing is not None:
+                account = account_manager.update_account(
+                    existing.account_id,
+                    display_name=display_name,
+                    provider="zoho",
+                    mailbox_connected=True,
+                ) or existing
+            else:
+                account = account_manager.create_account(
+                    email=email,
+                    display_name=display_name,
+                    provider="zoho",
+                    mailbox_connected=True,
+                )
+        account_manager.set_active_account(account.account_id)
+        acc_settings = runtime_settings.for_account(account.account_id)
+        status = _ingest_sent_records(acc_settings, raw_records)
+
+        cred_payload = json.dumps({
+            "email": email,
+            "app_password": app_password,
+            "region": request.region,
+            "imap_host": conn_info.get("imap_host", connector.imap_host),
+            "smtp_host": conn_info.get("smtp_host", connector.smtp_host),
+        })
+        cred_path = acc_settings.local_user_data_dir / "zoho_credentials.bin"
+        cred_path.write_text(protect_secret(cred_payload, acc_settings.local_user_data_dir), encoding="utf-8")
+        updated = account_manager.get_account(account.account_id) or account
+        return MailboxConnectResponse(
+            account=updated.to_dict(),
+            extracted_emails=status.extracted_emails,
+            clean_emails_retained=status.clean_emails_retained,
+            message=f"Zoho Mail ({request.region}) verified and Sent mail ingestion completed.",
+        )
+
+    @app.get("/api/auth/zoho/status", response_model=ZohoOAuthStatusResponse)
+    def zoho_auth_status() -> ZohoOAuthStatusResponse:
+        cfg = load_zoho_oauth_config(runtime_settings)
+        redirect_uri = runtime_settings.zoho_oauth_redirect_uri
+        if cfg:
+            return ZohoOAuthStatusResponse(
+                configured=True,
+                region=cast(Any, cfg.get("region", "in")),
+                redirect_uri=redirect_uri,
+                message="Zoho Mail OAuth2 is configured.",
+            )
+        return ZohoOAuthStatusResponse(
+            configured=False,
+            region="in",
+            redirect_uri=redirect_uri,
+            message="Zoho OAuth2 credentials are not configured yet.",
+        )
+
+    @app.post("/api/auth/zoho/configure", response_model=ZohoOAuthStatusResponse)
+    def zoho_auth_configure(request: ZohoOAuthConfigureRequest) -> ZohoOAuthStatusResponse:
+        try:
+            cfg = save_zoho_oauth_config(
+                runtime_settings,
+                client_id=request.client_id,
+                client_secret=request.client_secret,
+                region=request.region,
+            )
+        except ConnectorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return ZohoOAuthStatusResponse(
+            configured=True,
+            region=cast(Any, cfg["region"]),
+            redirect_uri=runtime_settings.zoho_oauth_redirect_uri,
+            message="Zoho OAuth2 configuration saved.",
+        )
+
+    @app.post("/api/auth/zoho/start", response_model=ZohoAuthStartResponse)
+    def zoho_auth_start() -> ZohoAuthStartResponse:
+        cfg = load_zoho_oauth_config(runtime_settings)
+        if cfg is None:
+            raise HTTPException(status_code=400, detail="MISSING_ZOHO_OAUTH_CONFIG")
+        state = secrets.token_urlsafe(24)
+        redirect_uri = runtime_settings.zoho_oauth_redirect_uri
+        auth_url = build_zoho_auth_url(cfg, redirect_uri=redirect_uri, state=state)
+        cutoff = time.time() - 900
+        flows = {k: v for k, v in app.state.oauth_flows.items() if v.get("created_at", 0) >= cutoff}
+        flows[state] = {
+            "provider": "zoho",
+            "region": cfg.get("region", "in"),
+            "redirect_uri": redirect_uri,
+            "created_at": time.time(),
+        }
+        app.state.oauth_flows = flows
+        return ZohoAuthStartResponse(auth_url=auth_url, state=state, redirect_uri=redirect_uri)
+
+    @app.get("/api/auth/zoho/callback")
+    def zoho_auth_callback(
+        background_tasks: BackgroundTasks,
+        code: str | None = None,
+        state: str | None = None,
+        error: str | None = None,
+    ) -> RedirectResponse:
+        frontend = runtime_settings.frontend_url.rstrip("/")
+        if error:
+            return RedirectResponse(url=f"{frontend}/workspace?auth=error&reason={error}")
+        if not code or not state:
+            return RedirectResponse(url=f"{frontend}/workspace?auth=error&reason=missing_code_or_state")
+        pending = app.state.oauth_flows.pop(state, None)
+        if not pending or pending.get("provider") != "zoho":
+            return RedirectResponse(url=f"{frontend}/workspace?auth=error&reason=unknown_or_expired_state")
+        cfg = load_zoho_oauth_config(runtime_settings)
+        if cfg is None:
+            return RedirectResponse(url=f"{frontend}/workspace?auth=error&reason=zoho_config_missing")
+        try:
+            tokens = exchange_zoho_code(
+                cfg,
+                code=code,
+                redirect_uri=str(pending.get("redirect_uri") or runtime_settings.zoho_oauth_redirect_uri),
+            )
+            info = fetch_zoho_user_info(str(tokens["access_token"]), region=str(cfg.get("region", "in")))
+        except ConnectorError:
+            return RedirectResponse(url=f"{frontend}/workspace?auth=error&reason=zoho_exchange_failed")
+
+        email = str(info.get("email") or "").strip().lower()
+        if not email:
+            return RedirectResponse(url=f"{frontend}/workspace?auth=error&reason=no_email_returned")
+        display_name = str(info.get("display_name") or email.split("@")[0])
+        tokens["zoho_account_id"] = info.get("zoho_account_id", "")
+        tokens["region"] = cfg.get("region", "in")
+
+        existing = account_manager.get_account_by_email(email)
+        if existing is not None:
+            account = account_manager.update_account(
+                existing.account_id,
+                display_name=display_name,
+                provider="zoho",
+                mailbox_connected=True,
+            ) or existing
+        else:
+            account = account_manager.create_account(
+                email=email,
+                display_name=display_name,
+                provider="zoho",
+                mailbox_connected=True,
+            )
+        account_manager.set_active_account(account.account_id)
+        acc_settings = runtime_settings.for_account(account.account_id)
+        save_zoho_tokens(acc_settings, tokens)
+        background_tasks.add_task(_run_connector_ingestion_bg, account.account_id, 200)
+        return RedirectResponse(url=f"{frontend}/workspace?auth=success&account_id={account.account_id}")
 
     # --- Account management -------------------------------------------------
     @app.get("/api/accounts", response_model=AccountListResponse)

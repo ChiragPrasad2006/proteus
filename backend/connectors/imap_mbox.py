@@ -343,7 +343,18 @@ class ImapConnector(BaseEmailConnector):
         self.smtp_host = smtp_host or host.replace("imap.", "smtp.")
         self.smtp_port = smtp_port
 
-    def fetch_sent_emails(self, limit: int) -> list[RawSentEmail]:
+    def test_connection(self) -> dict[str, Any]:
+        """Verify IMAP SSL authentication."""
+        if not all((self.host, self.username, self.password)):
+            raise ConnectorError("IMAP host, username, and password are required.")
+        try:
+            with imaplib.IMAP4_SSL(self.host, self.port) as client:
+                client.login(self.username, self.password)
+            return {"ok": True, "provider": "imap", "host": self.host}
+        except (imaplib.IMAP4.error, OSError) as exc:
+            raise ConnectorError(f"IMAP connection failed: {exc}") from exc
+
+    def fetch_sent_emails(self, limit: int = 200) -> list[RawSentEmail]:
         """Download only the requested recent Sent messages and immediately normalize them."""
         if not all((self.host, self.username, self.password)):
             raise ConnectorError("IMAP host, username, and password are required.")

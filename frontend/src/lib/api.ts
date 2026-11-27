@@ -13,6 +13,7 @@ import type {
   InboxThreadSummary,
   OnboardingStatus,
   Provider,
+  ZohoRegion,
   RecipientContact,
   RelationshipTier,
   ReplyMode,
@@ -269,7 +270,7 @@ function initials(name: string, email: string): string {
 function toAccount(account: BackendAccount): Account {
   const name = asString(account?.display_name)
   const email = asString(account?.email)
-  const provider = ['gmail', 'outlook', 'imap', 'mbox', 'demo'].includes(account?.provider)
+  const provider = ['gmail', 'outlook', 'zoho', 'imap', 'mbox', 'demo'].includes(account?.provider)
     ? account.provider : 'gmail'
   return {
     id: asString(account?.account_id),
@@ -367,7 +368,7 @@ export const api = {
     }),
 
   dispatch: (payload: {
-    provider: 'gmail' | 'outlook' | 'imap' | 'demo'
+    provider: 'gmail' | 'outlook' | 'zoho' | 'imap' | 'demo'
     to: string[]
     cc?: string[]
     bcc?: string[]
@@ -506,6 +507,45 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ client_secret_json: clientSecretJson }),
     }),
+
+  /* ── Outlook (Microsoft Graph OAuth2) ─────────────────────────────────── */
+
+  outlookAuthStatus: () =>
+    request<{ configured: boolean; tenant_id: string; has_client_secret: boolean; redirect_uri: string; message: string }>('/auth/outlook/status'),
+
+  outlookAuthConfigure: (payload: { client_id: string; client_secret?: string; tenant_id?: string }) =>
+    request<{ configured: boolean; tenant_id: string; has_client_secret: boolean; redirect_uri: string; message: string }>('/auth/outlook/configure', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  outlookAuthStart: () =>
+    request<{ auth_url: string; state: string; redirect_uri: string }>('/auth/outlook/start', { method: 'POST' }),
+
+  /* ── Zoho Mail (App Password + OAuth2) ────────────────────────────────── */
+
+  connectZoho: async (
+    payload: { email: string; display_name?: string; app_password: string; region: ZohoRegion },
+    accountId?: string,
+  ) => {
+    const result = await request<{ account: BackendAccount; extracted_emails: number; clean_emails_retained: number; message: string }>(
+      '/onboarding/connect-zoho',
+      { method: 'POST', body: JSON.stringify(payload), accountId },
+    )
+    return { ...result, account: toAccount(result.account) }
+  },
+
+  zohoAuthStatus: () =>
+    request<{ configured: boolean; region: ZohoRegion; redirect_uri: string; message: string }>('/auth/zoho/status'),
+
+  zohoAuthConfigure: (payload: { client_id: string; client_secret: string; region: ZohoRegion }) =>
+    request<{ configured: boolean; region: ZohoRegion; redirect_uri: string; message: string }>('/auth/zoho/configure', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  zohoAuthStart: () =>
+    request<{ auth_url: string; state: string; redirect_uri: string }>('/auth/zoho/start', { method: 'POST' }),
 
   /* ── Contacts ──────────────────────────────────────────────────────────── */
 

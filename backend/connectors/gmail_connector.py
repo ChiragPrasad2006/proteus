@@ -217,6 +217,12 @@ class GmailConnector(BaseEmailConnector):
             raise ConnectorError("google-api-python-client is required for Gmail API access.") from exc
         return build("gmail", "v1", credentials=credentials, cache_discovery=False)
 
+    def test_connection(self) -> dict[str, Any]:
+        """Verify Gmail REST API access."""
+        service = self._build_service(require_send=False)
+        profile = service.users().getProfile(userId="me").execute()
+        return {"ok": True, "provider": "gmail", "email": profile.get("emailAddress", "")}
+
     def fetch_sent_emails(self, limit: int) -> list[RawSentEmail]:
         """Authorize locally, query ``in:sent``, and return normalized messages."""
         service = self._build_service(require_send=False)

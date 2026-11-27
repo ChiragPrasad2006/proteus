@@ -17,7 +17,7 @@ import { toast } from '@/stores/useToastStore'
 import { useWorkspaceUI } from '@/stores/useWorkspaceUI'
 import type { Provider, Session } from '@/types'
 
-const PROVIDER_LABEL: Record<Provider, string> = { gmail: 'Gmail', outlook: 'Outlook', imap: 'IMAP', mbox: 'Mbox', demo: 'Demo' }
+const PROVIDER_LABEL: Record<Provider, string> = { gmail: 'GMAIL', outlook: 'OUTLOOK', zoho: 'ZOHO', imap: 'IMAP', mbox: 'MBOX', demo: 'DEMO' }
 const BUCKET_ORDER: SessionBucket[] = ['Today', 'Yesterday', 'Previous 7 Days', 'Older']
 
 export interface SessionRailProps {
@@ -621,6 +621,7 @@ export function SessionRail({ collapsed, onToggleCollapsed, fullscreen = false, 
                   <span className="block truncate text-[12px] text-paper">{item.name || item.email}</span>
                   <span className="block truncate font-mono text-[12px] text-paper-muted">{item.email}</span>
                 </span>
+                <span className="shrink-0 rounded-pill border border-hairline px-2 py-0.5 font-mono text-[12px] text-paper-muted">{PROVIDER_LABEL[item.provider]}</span>
                 {item.id === activeAccountId ? <Check className="h-4 w-4 shrink-0 text-foam" aria-hidden /> : null}
               </button>
             ))}

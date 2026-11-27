@@ -78,7 +78,7 @@ class Dispatcher:
 
     def connector_for_provider(self, provider: str) -> BaseEmailConnector:
         """Return an injected account-aware connector when supplied, otherwise provider defaults."""
-        if provider == "gmail" and self.connector_factory is not None:
+        if provider not in ("demo", "mbox") and self.connector_factory is not None:
             return self.connector_factory()
         return self._connector_from_provider(provider)
 

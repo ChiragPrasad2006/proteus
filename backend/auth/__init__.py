@@ -1,0 +1,51 @@
+"""Local-first OAuth2 helpers for Microsoft Graph (Outlook) and Zoho Mail."""
+
+from .microsoft_oauth import (
+    MICROSOFT_SCOPES,
+    build_outlook_auth_url,
+    exchange_outlook_code,
+    fetch_microsoft_user_info,
+    generate_pkce_pair,
+    load_outlook_oauth_config,
+    load_outlook_tokens,
+    refresh_outlook_token,
+    save_outlook_oauth_config,
+    save_outlook_tokens,
+)
+from .zoho_oauth import (
+    ZOHO_OAUTH_SCOPES,
+    ZOHO_REGIONS,
+    build_zoho_auth_url,
+    exchange_zoho_code,
+    fetch_zoho_user_info,
+    get_zoho_region_config,
+    load_zoho_oauth_config,
+    load_zoho_tokens,
+    refresh_zoho_token,
+    save_zoho_oauth_config,
+    save_zoho_tokens,
+)
+
+__all__ = [
+    "MICROSOFT_SCOPES",
+    "build_outlook_auth_url",
+    "exchange_outlook_code",
+    "fetch_microsoft_user_info",
+    "generate_pkce_pair",
+    "load_outlook_oauth_config",
+    "load_outlook_tokens",
+    "refresh_outlook_token",
+    "save_outlook_oauth_config",
+    "save_outlook_tokens",
+    "ZOHO_OAUTH_SCOPES",
+    "ZOHO_REGIONS",
+    "build_zoho_auth_url",
+    "exchange_zoho_code",
+    "fetch_zoho_user_info",
+    "get_zoho_region_config",
+    "load_zoho_oauth_config",
+    "load_zoho_tokens",
+    "refresh_zoho_token",
+    "save_zoho_oauth_config",
+    "save_zoho_tokens",
+]

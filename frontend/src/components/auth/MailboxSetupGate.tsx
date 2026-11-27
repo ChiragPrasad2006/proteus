@@ -1,6 +1,7 @@
 import { Check, Copy, Lock, Loader2, Shield, Upload } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { ApiError, api } from '@/lib/api'
+import { OutlookSetupPanel, ProviderPillBar, ZohoSetupPanel, type MailboxProviderTab } from '@/components/auth/ProviderSetupPanels'
 import { startGoogleSignIn } from '@/lib/googleAuth'
 import type { Account } from '@/types'
 
@@ -9,6 +10,7 @@ export function MailboxSetupGate({ account, onConnected, onAccountCreated }: {
   onConnected: (account: Account) => void
   onAccountCreated: (account: Account) => void
 }) {
+  const [provider, setProvider] = useState<MailboxProviderTab>('gmail')
   const [tab, setTab] = useState<'app-password' | 'oauth'>('app-password')
   const [password, setPassword] = useState('')
   const [email, setEmail] = useState('')
@@ -95,7 +97,14 @@ export function MailboxSetupGate({ account, onConnected, onAccountCreated }: {
         {account ? (
           <>
             <p className="mt-3 text-sm leading-relaxed text-ink/70">Your mailbox connection is required before drafting or sending.</p>
-            <div className="mt-5 flex gap-1 border-b border-ink/15">
+            <ProviderPillBar provider={provider} onChange={setProvider} />
+            {provider === 'outlook' ? (
+              <OutlookSetupPanel />
+            ) : provider === 'zoho' ? (
+              <ZohoSetupPanel initialEmail={account.email} initialName={account.name} accountId={account.id} onConnected={onConnected} />
+            ) : (
+              <>
+                <div className="mt-5 flex gap-1 border-b border-ink/15">
               <button type="button" onClick={() => setTab('app-password')} className={`flex-1 border-b-2 px-3 py-3 font-mono text-[12px] uppercase tracking-wider transition-colors ${tab === 'app-password' ? 'border-ember-ink text-ember-ink font-semibold' : 'border-transparent text-ink-muted hover:text-ink'}`}>Gmail App Password</button>
               <button type="button" onClick={() => setTab('oauth')} className={`flex-1 border-b-2 px-3 py-3 font-mono text-[12px] uppercase tracking-wider transition-colors ${tab === 'oauth' ? 'border-ember-ink text-ember-ink font-semibold' : 'border-transparent text-ink-muted hover:text-ink'}`}><Shield className="mr-1 inline h-3.5 w-3.5" />Google OAuth</button>
             </div>
@@ -144,6 +153,8 @@ export function MailboxSetupGate({ account, onConnected, onAccountCreated }: {
                 {error ? <p className="mt-3 text-sm text-ember-ink">{error}</p> : null}
                 <button type="submit" disabled={busy || !credentialsJson} className="mt-5 inline-flex items-center gap-2 rounded-pill bg-ink px-5 py-2.5 text-sm font-medium text-paper disabled:opacity-50 hover:bg-ink/90">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{busy ? 'Saving…' : 'Save & Sign In with Google'}</button>
               </form>
+            )}
+              </>
             )}
           </>
         ) : (
