@@ -305,10 +305,11 @@ class GoogleOAuthCredentialsStatus(StrictModel):
 
 
 class IdentityLoginRequest(StrictModel):
-    """Local identity fallback when a Google OAuth client is not configured."""
+    """Local identity fallback when an OAuth client is not configured."""
 
     email: str = Field(min_length=3, max_length=320)
     display_name: str = Field(min_length=1, max_length=120)
+    provider: Literal["gmail", "outlook", "zoho"] = "gmail"
 
 
 class ConnectAppPasswordRequest(StrictModel):
@@ -325,6 +326,20 @@ class MailboxConnectResponse(StrictModel):
     extracted_emails: int
     clean_emails_retained: int
     message: str
+
+
+class InitialSyncStatusResponse(StrictModel):
+    """Account-scoped first-launch mailbox knowledge sync status."""
+
+    initial_sync_completed: bool = False
+    running: bool = False
+    stage: str = "idle"
+    sent_processed: int = 0
+    sent_total: int = 0
+    personas_built: int = 0
+    inbox_threads_indexed: int = 0
+    last_synced_at: str = ""
+    error: str = ""
 
 
 class AccountSwitchRequest(StrictModel):

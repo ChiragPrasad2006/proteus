@@ -3,9 +3,15 @@ import { ArrowRight, Copy, Check } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { EmailSignInModal } from '@/components/auth/EmailSignInModal'
 import { Button } from '@/components/ui/Button'
-import { startGoogleSignIn } from '@/lib/googleAuth'
+import { startProviderSignIn, type OAuthProvider } from '@/lib/googleAuth'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
+
+const PROVIDER_OPTIONS: { id: OAuthProvider; label: string; name: string }[] = [
+  { id: 'gmail', label: 'Google (Gmail)', name: 'Google' },
+  { id: 'outlook', label: 'Outlook', name: 'Outlook' },
+  { id: 'zoho', label: 'Zoho Mail', name: 'Zoho' },
+]
 
 const INSTALL_CMD = '.\\Proteus.exe'
 
@@ -82,17 +88,35 @@ function CopyInstallButton() {
  */
 export function Hero() {
   const [setupOpen, setSetupOpen] = useState(false)
+  const [selectedProvider, setSelectedProvider] = useState<OAuthProvider>('gmail')
+  const [modalNote, setModalNote] = useState<string | undefined>(undefined)
   const [authError, setAuthError] = useState<string | null>(null)
+  const [busyProvider, setBusyProvider] = useState<OAuthProvider | null>(null)
 
-  const beginGoogleLogin = async () => {
+  const beginProviderLogin = async (provider: OAuthProvider) => {
     setAuthError(null)
+    setBusyProvider(provider)
+    const label = PROVIDER_OPTIONS.find((item) => item.id === provider)?.name ?? 'Provider'
     try {
-      if (!(await startGoogleSignIn())) setSetupOpen(true)
+      if (!(await startProviderSignIn(provider))) {
+        setSelectedProvider(provider)
+        setModalNote(`${label} OAuth is not configured on this machine yet — sign in with your email to continue, then unlock your ${label} mailbox inside the workspace.`)
+        setSetupOpen(true)
+      }
     } catch (error) {
       setAuthError(error instanceof ApiError && error.status === 0
         ? 'Cannot reach Proteus backend on 127.0.0.1:8000 — start Proteus.exe'
-        : 'Google sign-in could not be started. Please try again.')
+        : `${label} sign-in could not be started. Please try again.`)
+    } finally {
+      setBusyProvider(null)
     }
+  }
+
+  const openEmailSignIn = () => {
+    setAuthError(null)
+    setSelectedProvider('gmail')
+    setModalNote(undefined)
+    setSetupOpen(true)
   }
 
   return (
@@ -151,24 +175,44 @@ export function Hero() {
 
           {/* CTAs */}
           <div
-            className="mt-10 flex flex-wrap items-center gap-4 opacity-0"
+            className="mt-10 space-y-3 opacity-0"
             style={{ animation: 'fade-up 0.7s cubic-bezier(0.16,1,0.3,1) 760ms both' }}
           >
-            <Button
-              size="lg"
-              onClick={beginGoogleLogin}
-              className="rounded-pill bg-paper px-7 font-medium text-ink hover:-translate-y-px hover:bg-white"
-            >
-              Continue with Google
-            </Button>
-            <Link
-              to="https://github.com/ChiragPrasad2006/proteus"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex h-12 items-center gap-2 rounded-pill border border-hairline px-6 font-mono text-[12px] uppercase tracking-[0.12em] text-paper-muted transition-colors hover:border-paper-label hover:text-paper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foam"
-            >
-              Read the source <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
+            <div className="flex flex-wrap items-center gap-2.5">
+              {PROVIDER_OPTIONS.map((item, idx) => (
+                <Button
+                  key={item.id}
+                  size="lg"
+                  disabled={busyProvider !== null}
+                  onClick={() => void beginProviderLogin(item.id)}
+                  className={cn(
+                    'rounded-pill px-5 font-medium transition-transform',
+                    idx === 0
+                      ? 'bg-paper text-ink hover:-translate-y-px hover:bg-white'
+                      : 'border border-hairline bg-cobalt-deep/70 text-paper hover:-translate-y-px hover:border-paper-label hover:bg-cobalt-deep',
+                  )}
+                >
+                  {busyProvider === item.id ? 'Connecting…' : item.label}
+                </Button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-5 pt-1">
+              <button
+                type="button"
+                onClick={openEmailSignIn}
+                className="font-mono text-[12px] uppercase tracking-[0.14em] text-paper-label underline decoration-hairline underline-offset-4 transition-colors hover:text-foam hover:decoration-foam focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foam"
+              >
+                Sign in with Email
+              </button>
+              <Link
+                to="https://github.com/ChiragPrasad2006/proteus"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 font-mono text-[12px] uppercase tracking-[0.14em] text-paper-muted transition-colors hover:text-paper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foam"
+              >
+                Read the source <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
           </div>
           {authError ? <p role="alert" className="mt-4 max-w-md border-l-2 border-ember px-3 py-2 text-sm text-paper-muted">{authError}</p> : null}
 
@@ -186,7 +230,8 @@ export function Hero() {
         isOpen={setupOpen}
         onClose={() => setSetupOpen(false)}
         onSignedIn={() => { window.location.href = '/workspace' }}
-        note="Google OAuth is not configured on this machine yet — sign in with your email to continue, then configure App Password or OAuth inside the workspace"
+        provider={selectedProvider}
+        note={modalNote}
       />
     </section>
   )

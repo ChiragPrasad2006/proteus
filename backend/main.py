@@ -64,6 +64,7 @@ from backend.generation import (
     resolve_draft_context,
 )
 from backend.connectors.gmail_connector import GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE
+from backend.ingestion.initial_sync import start_initial_sync
 from backend.processing import clean_raw_email, compute_stylometry
 from backend.profiler import ProfilerUnavailable, QwenStyleProfiler
 from backend.retrieval import LanceDBVectorStore, LocalEmbedder
@@ -100,6 +101,7 @@ from backend.schemas import (
     InboxThreadListResponse,
     InboxThreadMessage,
     InboxThreadSummary,
+    InitialSyncStatusResponse,
     ConnectAppPasswordRequest,
     ConnectZohoRequest,
     MailboxConnectResponse,
@@ -1036,20 +1038,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return generated
         return None
 
-    def _create_or_update_identity(email: str, display_name: str, avatar_url: str = "") -> AccountInfo:
+    def _create_or_update_identity(
+        email: str,
+        display_name: str,
+        avatar_url: str = "",
+        provider: str = "gmail",
+    ) -> AccountInfo:
         existing = account_manager.get_account_by_email(email)
         if existing is not None:
             account = account_manager.update_account(
                 existing.account_id,
                 display_name=display_name,
                 avatar_url=avatar_url,
-                provider="gmail",
+                provider=provider,
             ) or existing
         else:
             account = account_manager.create_account(
                 email=email,
                 display_name=display_name,
-                provider="gmail",
+                provider=provider,
                 avatar_url=avatar_url,
                 mailbox_connected=False,
             )
@@ -1134,6 +1141,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             pass
 
+        if account.mailbox_connected and not ProfileStore(acc_settings).get_initial_sync_state()["initial_sync_completed"]:
+            background_tasks.add_task(start_initial_sync, account.account_id, runtime_settings, account_manager)
+
         # Identity sign-in never proves mailbox access. The workspace gate owns
         # the subsequent IMAP/SMTP App Password verification and ingestion.
         return RedirectResponse(url=f"{frontend}/workspace?auth=success&account_id={account.account_id}")
@@ -1169,11 +1179,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/auth/identity")
     def local_identity_login(request: IdentityLoginRequest) -> dict[str, Any]:
-        """Create a local signed-in identity when Google OAuth is not configured."""
+        """Create a local signed-in identity when OAuth is not configured."""
         email = request.email.strip().lower()
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
             raise HTTPException(status_code=422, detail="Enter a valid email address.")
-        account = _create_or_update_identity(email, request.display_name.strip())
+        account = _create_or_update_identity(email, request.display_name.strip(), provider=request.provider)
         return {"account": account.to_dict()}
 
     @app.post("/api/onboarding/connect-app-password", response_model=MailboxConnectResponse)
@@ -1226,6 +1236,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         secret_path = acc_settings.local_user_data_dir / "app_password.bin"
         secret_path.write_text(protect_secret(app_password, acc_settings.local_user_data_dir), encoding="utf-8")
         updated = account_manager.update_account(account.account_id, mailbox_connected=True) or account
+        if not store.get_initial_sync_state()["initial_sync_completed"]:
+            start_initial_sync(updated.account_id, runtime_settings, account_manager)
         return MailboxConnectResponse(
             account=updated.to_dict(),
             extracted_emails=status.extracted_emails,
@@ -1382,7 +1394,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         account_manager.set_active_account(account.account_id)
         acc_settings = runtime_settings.for_account(account.account_id)
         save_outlook_tokens(acc_settings, tokens)
-        background_tasks.add_task(_run_connector_ingestion_bg, account.account_id, 200)
+        if not ProfileStore(acc_settings).get_initial_sync_state()["initial_sync_completed"]:
+            background_tasks.add_task(start_initial_sync, account.account_id, runtime_settings, account_manager)
         return RedirectResponse(url=f"{frontend}/workspace?auth=success&account_id={account.account_id}")
 
     # --- Zoho Mail (App Password default + optional OAuth2) ----------------
@@ -1447,6 +1460,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cred_path = acc_settings.local_user_data_dir / "zoho_credentials.bin"
         cred_path.write_text(protect_secret(cred_payload, acc_settings.local_user_data_dir), encoding="utf-8")
         updated = account_manager.get_account(account.account_id) or account
+        if not ProfileStore(acc_settings).get_initial_sync_state()["initial_sync_completed"]:
+            start_initial_sync(updated.account_id, runtime_settings, account_manager)
         return MailboxConnectResponse(
             account=updated.to_dict(),
             extracted_emails=status.extracted_emails,
@@ -1562,7 +1577,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         account_manager.set_active_account(account.account_id)
         acc_settings = runtime_settings.for_account(account.account_id)
         save_zoho_tokens(acc_settings, tokens)
-        background_tasks.add_task(_run_connector_ingestion_bg, account.account_id, 200)
+        if not ProfileStore(acc_settings).get_initial_sync_state()["initial_sync_completed"]:
+            background_tasks.add_task(start_initial_sync, account.account_id, runtime_settings, account_manager)
         return RedirectResponse(url=f"{frontend}/workspace?auth=success&account_id={account.account_id}")
 
     # --- Account management -------------------------------------------------
@@ -1592,6 +1608,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"deleted": True, "account_id": account_id}
 
     # --- Onboarding ---------------------------------------------------------
+    @app.post("/api/onboarding/initial-sync", response_model=InitialSyncStatusResponse)
+    def trigger_initial_sync(
+        force: bool = Query(default=False),
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> InitialSyncStatusResponse:
+        """Start (idempotently) the background first-launch vector, persona, and inbox sync."""
+        account, _ = ctx
+        if account is None:
+            raise HTTPException(status_code=400, detail="X-Account-ID header is required.")
+        state = start_initial_sync(account.account_id, runtime_settings, account_manager, force=force)
+        return InitialSyncStatusResponse(**state)
+
+    @app.get("/api/onboarding/initial-sync/status", response_model=InitialSyncStatusResponse)
+    def get_initial_sync_status(
+        ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
+    ) -> InitialSyncStatusResponse:
+        """Return live first-launch sync progress for the active X-Account-ID."""
+        account, acc_settings = ctx
+        if account is None:
+            raise HTTPException(status_code=400, detail="X-Account-ID header is required.")
+        state = ProfileStore(acc_settings).get_initial_sync_state()
+        return InitialSyncStatusResponse(**state)
+
     @app.post("/api/onboarding/connect-and-extract", response_model=OnboardingStatus)
     def connect_and_extract(
         request: OnboardingRequest, ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx)
@@ -2145,15 +2184,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/inbox/threads", response_model=InboxThreadListResponse)
     def list_inbox_threads(
         limit: int = Query(default=25, ge=1, le=100),
+        refresh: bool = Query(default=False),
         ctx: tuple[AccountInfo | None, Settings] = Depends(account_ctx),
     ) -> InboxThreadListResponse:
         """Read-only fetch of recent INBOX threads scoped to X-Account-ID."""
         account, acc_settings = ctx
         if account is None:
             raise HTTPException(status_code=400, detail="X-Account-ID header is required.")
+        store = ProfileStore(acc_settings)
+        if not refresh:
+            cached = store.load_inbox_threads_cache(limit=limit)
+            if cached:
+                return InboxThreadListResponse(threads=[InboxThreadSummary(**t) for t in cached])
         try:
             connector = _inbox_connector_for_account(acc_settings)
             raw_threads = connector.fetch_inbox_threads(limit=limit)
+            if raw_threads:
+                store.save_inbox_threads_cache(raw_threads)
         except ConnectorError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:

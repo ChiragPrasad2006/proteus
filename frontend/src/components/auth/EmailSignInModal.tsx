@@ -1,12 +1,20 @@
 import { Loader2, X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { api } from '@/lib/api'
+import type { OAuthProvider } from '@/lib/googleAuth'
 
-export function EmailSignInModal({ isOpen, onClose, onSignedIn, note }: {
+const PROVIDER_LABEL: Record<OAuthProvider, string> = {
+  gmail: 'Google (Gmail)',
+  outlook: 'Outlook',
+  zoho: 'Zoho Mail',
+}
+
+export function EmailSignInModal({ isOpen, onClose, onSignedIn, note, provider = 'gmail' }: {
   isOpen: boolean
   onClose: () => void
   onSignedIn?: () => void
   note?: string
+  provider?: OAuthProvider
 }) {
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -23,6 +31,7 @@ export function EmailSignInModal({ isOpen, onClose, onSignedIn, note }: {
       await api.identityLogin({
         email: email.trim(),
         display_name: displayName.trim() || email.trim().split('@')[0] || 'Proteus user',
+        provider,
       })
       onSignedIn?.()
       onClose()
@@ -38,7 +47,9 @@ export function EmailSignInModal({ isOpen, onClose, onSignedIn, note }: {
       <form onSubmit={submit} className="w-full max-w-md rounded-[2px] border border-ink/15 bg-paper p-7 text-ink">
         <div className="mb-6 flex items-start justify-between">
           <div>
-            <p className="font-mono text-[12px] uppercase tracking-[0.18em] text-ink-muted">Identity sign-in</p>
+            <p className="font-mono text-[12px] uppercase tracking-[0.18em] text-ink-muted">
+              Identity sign-in · {PROVIDER_LABEL[provider]}
+            </p>
             <h2 className="mt-2 font-display text-3xl">Sign in with Email</h2>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="text-ink-muted hover:text-ink"><X className="h-5 w-5" /></button>

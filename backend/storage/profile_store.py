@@ -80,6 +80,23 @@ class ProfileStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_pilot_events_type
                     ON pilot_events(event_type, created_at);
+                CREATE TABLE IF NOT EXISTS initial_sync_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    initial_sync_completed INTEGER NOT NULL DEFAULT 0,
+                    stage TEXT NOT NULL DEFAULT 'idle',
+                    sent_processed INTEGER NOT NULL DEFAULT 0,
+                    sent_total INTEGER NOT NULL DEFAULT 0,
+                    personas_built INTEGER NOT NULL DEFAULT 0,
+                    inbox_threads_indexed INTEGER NOT NULL DEFAULT 0,
+                    last_synced_at TEXT NOT NULL DEFAULT '',
+                    error TEXT NOT NULL DEFAULT ''
+                );
+                CREATE TABLE IF NOT EXISTS inbox_threads_cache (
+                    thread_id TEXT PRIMARY KEY,
+                    last_message_at TEXT NOT NULL DEFAULT '',
+                    summary_json TEXT NOT NULL,
+                    cached_at TEXT NOT NULL
+                );
                 """
             )
             # Idempotent migrations for existing databases
@@ -602,3 +619,136 @@ class ProfileStore:
             "learned_rules_count": global_rules_cnt + recipient_rules_cnt,
             "audience_breakdown": breakdown,
         }
+
+    _RUNNING_SYNC_STAGES = frozenset({
+        "running",
+        "fetching_sent",
+        "indexing_vectors",
+        "building_personas",
+        "caching_inbox",
+    })
+
+    def get_initial_sync_state(self) -> dict[str, Any]:
+        """Return the account-scoped first-launch sync progress state."""
+        with sqlite3.connect(self.settings.sqlite_path) as connection:
+            row = connection.execute(
+                """
+                SELECT initial_sync_completed, stage, sent_processed, sent_total,
+                       personas_built, inbox_threads_indexed, last_synced_at, error
+                FROM initial_sync_state
+                WHERE id = 1
+                """
+            ).fetchone()
+        if row is None:
+            return {
+                "initial_sync_completed": False,
+                "running": False,
+                "stage": "idle",
+                "sent_processed": 0,
+                "sent_total": 0,
+                "personas_built": 0,
+                "inbox_threads_indexed": 0,
+                "last_synced_at": "",
+                "error": "",
+            }
+        stage = str(row[1] or "idle")
+        return {
+            "initial_sync_completed": bool(row[0]),
+            "running": stage in self._RUNNING_SYNC_STAGES,
+            "stage": stage,
+            "sent_processed": int(row[2] or 0),
+            "sent_total": int(row[3] or 0),
+            "personas_built": int(row[4] or 0),
+            "inbox_threads_indexed": int(row[5] or 0),
+            "last_synced_at": str(row[6] or ""),
+            "error": str(row[7] or ""),
+        }
+
+    def update_initial_sync_state(self, **fields: Any) -> dict[str, Any]:
+        """Insert or update the account-scoped first-launch sync state."""
+        current = self.get_initial_sync_state()
+        merged = {
+            "initial_sync_completed": bool(fields.get("initial_sync_completed", current["initial_sync_completed"])),
+            "stage": str(fields.get("stage", current["stage"])),
+            "sent_processed": int(fields.get("sent_processed", current["sent_processed"])),
+            "sent_total": int(fields.get("sent_total", current["sent_total"])),
+            "personas_built": int(fields.get("personas_built", current["personas_built"])),
+            "inbox_threads_indexed": int(fields.get("inbox_threads_indexed", current["inbox_threads_indexed"])),
+            "last_synced_at": str(fields.get("last_synced_at", current["last_synced_at"])),
+            "error": str(fields.get("error", current["error"])),
+        }
+        with sqlite3.connect(self.settings.sqlite_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO initial_sync_state (
+                    id, initial_sync_completed, stage, sent_processed, sent_total,
+                    personas_built, inbox_threads_indexed, last_synced_at, error
+                ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    initial_sync_completed = excluded.initial_sync_completed,
+                    stage = excluded.stage,
+                    sent_processed = excluded.sent_processed,
+                    sent_total = excluded.sent_total,
+                    personas_built = excluded.personas_built,
+                    inbox_threads_indexed = excluded.inbox_threads_indexed,
+                    last_synced_at = excluded.last_synced_at,
+                    error = excluded.error
+                """,
+                (
+                    1 if merged["initial_sync_completed"] else 0,
+                    merged["stage"],
+                    merged["sent_processed"],
+                    merged["sent_total"],
+                    merged["personas_built"],
+                    merged["inbox_threads_indexed"],
+                    merged["last_synced_at"],
+                    merged["error"],
+                ),
+            )
+        merged["running"] = merged["stage"] in self._RUNNING_SYNC_STAGES
+        return merged
+
+    def save_inbox_threads_cache(self, threads: Sequence[dict[str, Any]]) -> int:
+        """Cache read-only inbox thread summaries locally for instant workspace loading."""
+        now = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(self.settings.sqlite_path) as connection:
+            connection.execute("DELETE FROM inbox_threads_cache")
+            connection.executemany(
+                """
+                INSERT INTO inbox_threads_cache (thread_id, last_message_at, summary_json, cached_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (
+                        str(item.get("thread_id", "")),
+                        str(item.get("last_message_at", "")),
+                        json.dumps(item),
+                        now,
+                    )
+                    for item in threads
+                    if item.get("thread_id")
+                ],
+            )
+        return len(threads)
+
+    def load_inbox_threads_cache(self, limit: int = 25) -> list[dict[str, Any]]:
+        """Return locally cached inbox thread summaries ordered by recency."""
+        with sqlite3.connect(self.settings.sqlite_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT summary_json
+                FROM inbox_threads_cache
+                ORDER BY last_message_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for (raw,) in rows:
+            try:
+                data = json.loads(raw)
+                if isinstance(data, dict):
+                    out.append(data)
+            except json.JSONDecodeError:
+                continue
+        return out

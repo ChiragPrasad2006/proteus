@@ -11,6 +11,7 @@ import type {
   HealthReport,
   InboxThreadDetail,
   InboxThreadSummary,
+  InitialSyncStatus,
   OnboardingStatus,
   Provider,
   ZohoRegion,
@@ -480,7 +481,7 @@ export const api = {
     return toAccount(payload)
   },
 
-  identityLogin: async (payload: { email: string; display_name: string }): Promise<Account> => {
+  identityLogin: async (payload: { email: string; display_name: string; provider?: 'gmail' | 'outlook' | 'zoho' }): Promise<Account> => {
     const result = await request<{ account: BackendAccount }>('/auth/identity', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -601,4 +602,15 @@ export const api = {
     const rec = asRecord(raw)
     return normalizeEmailDraft(rec, asString(rec.review_reason))
   },
+
+  /* ── First-launch mailbox knowledge sync ──────────────────────────────── */
+
+  startInitialSync: (force = false, accountId?: string): Promise<InitialSyncStatus> =>
+    request<InitialSyncStatus>(`/onboarding/initial-sync?force=${force ? 'true' : 'false'}`, {
+      method: 'POST',
+      accountId,
+    }),
+
+  initialSyncStatus: (accountId?: string): Promise<InitialSyncStatus> =>
+    request<InitialSyncStatus>('/onboarding/initial-sync/status', { accountId }),
 }

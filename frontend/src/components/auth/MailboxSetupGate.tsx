@@ -5,12 +5,23 @@ import { OutlookSetupPanel, ProviderPillBar, ZohoSetupPanel, type MailboxProvide
 import { startGoogleSignIn } from '@/lib/googleAuth'
 import type { Account } from '@/types'
 
+function toProviderTab(raw?: string): MailboxProviderTab {
+  if (raw === 'outlook' || raw === 'zoho') return raw
+  return 'gmail'
+}
+
 export function MailboxSetupGate({ account, onConnected, onAccountCreated }: {
   account: Account | null
   onConnected: (account: Account) => void
   onAccountCreated: (account: Account) => void
 }) {
-  const [provider, setProvider] = useState<MailboxProviderTab>('gmail')
+  const [provider, setProvider] = useState<MailboxProviderTab>(() => toProviderTab(account?.provider))
+  const [syncedAccountKey, setSyncedAccountKey] = useState<string | null>(account ? `${account.id}:${account.provider}` : null)
+  const currentKey = account ? `${account.id}:${account.provider}` : null
+  if (currentKey !== syncedAccountKey) {
+    setSyncedAccountKey(currentKey)
+    if (account) setProvider(toProviderTab(account.provider))
+  }
   const [tab, setTab] = useState<'app-password' | 'oauth'>('app-password')
   const [password, setPassword] = useState('')
   const [email, setEmail] = useState('')

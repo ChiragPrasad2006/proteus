@@ -343,3 +343,15 @@ export interface InboxThreadDetail {
   participants: string[]
   messages: InboxThreadMessage[]
 }
+
+export interface InitialSyncStatus {
+  initial_sync_completed: boolean
+  running: boolean
+  stage: 'idle' | 'running' | 'fetching_sent' | 'indexing_vectors' | 'building_personas' | 'caching_inbox' | 'completed' | 'error'
+  sent_processed: number
+  sent_total: number
+  personas_built: number
+  inbox_threads_indexed: number
+  last_synced_at: string
+  error: string
+}

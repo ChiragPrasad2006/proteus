@@ -38,6 +38,7 @@ MANIFEST
 # PyInstaller build output (root level)
 build/
 dist/
+release/
 # But keep the final Proteus.exe at repo root
 !Proteus.exe
 

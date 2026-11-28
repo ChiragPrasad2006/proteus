@@ -22,7 +22,7 @@ import { cn, uid } from '@/lib/utils'
 import { useActiveAccount, useAppStore } from '@/stores/useAppStore'
 import { toast } from '@/stores/useToastStore'
 import { useWorkspaceUI } from '@/stores/useWorkspaceUI'
-import type { Account, ReplyMode } from '@/types'
+import type { Account, InitialSyncStatus, ReplyMode } from '@/types'
 
 function humanError(err: unknown): string {
   if (err instanceof ApiError) return err.message
@@ -100,6 +100,8 @@ export function WorkspacePage() {
 
   const [banner, setBanner] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<InitialSyncStatus | null>(null)
+  const wasSyncRunningRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
 
   const locked = !account || !account.mailboxConnected || accounts.length === 0
@@ -277,6 +279,54 @@ export function WorkspacePage() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [])
 
+  /* ── First-launch mailbox knowledge sync polling ─────────────────────── */
+  useEffect(() => {
+    const accountId = account?.id
+    const connected = Boolean(account?.mailboxConnected)
+    if (!accountId || !connected) {
+      wasSyncRunningRef.current = false
+      return
+    }
+    let disposed = false
+    let timer: number | null = null
+
+    const poll = async () => {
+      try {
+        const status = await api.initialSyncStatus(accountId)
+        if (disposed) return
+        setSyncStatus(status)
+        if (wasSyncRunningRef.current && !status.running && status.stage === 'completed') {
+          wasSyncRunningRef.current = false
+          toast('Mailbox brain ready — voice, personas & inbox synced.', 'success')
+          const store = useAppStore.getState()
+          void api.profile(accountId).then((p) => store.setStyleProfile(p)).catch(() => {})
+          void api.listContacts(accountId).then((c) => store.setContacts(c.contacts)).catch(() => {})
+          void store.loadInboxThreads(25)
+        } else if (status.running) {
+          wasSyncRunningRef.current = true
+        }
+        if (status.running) {
+          timer = window.setTimeout(() => { void poll() }, 2000)
+        }
+      } catch {
+        /* ignore transient poll failures */
+      }
+    }
+
+    const onSyncStarted = () => {
+      wasSyncRunningRef.current = true
+      if (timer !== null) window.clearTimeout(timer)
+      void poll()
+    }
+    window.addEventListener('proteus:initial-sync-started', onSyncStarted)
+    void poll()
+    return () => {
+      disposed = true
+      window.removeEventListener('proteus:initial-sync-started', onSyncStarted)
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [account?.id, account?.mailboxConnected])
+
   const offline = health.isError
   const showBanner = banner !== null || offline
 
@@ -309,6 +359,47 @@ export function WorkspacePage() {
     )
   }
 
+  const activeSyncStatus = account?.id && account?.mailboxConnected ? syncStatus : null
+  const syncPercent = activeSyncStatus?.running
+    ? activeSyncStatus.stage === 'fetching_sent'
+      ? 20
+      : activeSyncStatus.stage === 'indexing_vectors'
+        ? 50
+        : activeSyncStatus.stage === 'building_personas'
+          ? 78
+          : activeSyncStatus.stage === 'caching_inbox'
+            ? 92
+            : 15
+    : 0
+
+  const syncStrip = activeSyncStatus?.running ? (
+    <div
+      role="status"
+      aria-live="polite"
+      className="border-b border-hairline bg-cobalt-deep/90 px-4 py-2.5 lg:px-5"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]">
+        <p className="font-mono text-paper-muted">
+          Building your local email brain ·{' '}
+          <span className="text-paper">
+            {activeSyncStatus.sent_processed}/{activeSyncStatus.sent_total} sent emails indexed
+          </span>{' '}
+          · {activeSyncStatus.personas_built} recipient personas learned ·{' '}
+          {activeSyncStatus.inbox_threads_indexed} inbox threads synced
+        </p>
+        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-foam">
+          {activeSyncStatus.stage.replace('_', ' ')}
+        </span>
+      </div>
+      <div className="mt-2 h-1 w-full overflow-hidden rounded-pill bg-hairline">
+        <div
+          className="h-full bg-foam transition-all duration-500 ease-proteus"
+          style={{ width: `${syncPercent}%` }}
+        />
+      </div>
+    </div>
+  ) : null
+
   const chatStage = (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col">
       <WorkspaceHeader
@@ -316,6 +407,7 @@ export function WorkspacePage() {
         titleOverride={railMode === 'inbox' ? (activeThread?.subject || 'Inbox') : undefined}
         participantsOverride={railMode === 'inbox' ? activeThread?.participants : undefined}
       />
+      {syncStrip}
       {bannerStrip}
       {railMode === 'inbox' ? (
         <InboxThreadPane busy={busy} onDraftReply={(tid, mode, inst) => void handleDraftReply(tid, mode, inst)} onCancel={handleCancel} />

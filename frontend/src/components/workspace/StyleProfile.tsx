@@ -1,4 +1,4 @@
-import { Download, LoaderCircle, Pencil, RotateCcw, X } from 'lucide-react'
+import { Download, LoaderCircle, Pencil, RefreshCw, RotateCcw, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { IconButton } from '@/components/ui/IconButton'
@@ -34,6 +34,7 @@ export function StyleProfile() {
 
   const [tab, setTab] = useState<AudienceMode>('1on1_private')
   const [building, setBuilding] = useState(false)
+  const [resyncing, setResyncing] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [recipientRules, setRecipientRules] = useState<RecipientRule[]>([])
@@ -91,6 +92,20 @@ export function StyleProfile() {
       toast(err instanceof Error ? err.message : 'Could not build the profile yet.', 'warning', 6000)
     } finally {
       setBuilding(false)
+    }
+  }
+
+  const resyncMailbox = async () => {
+    if (!accountId || resyncing) return
+    setResyncing(true)
+    try {
+      await api.startInitialSync(true, accountId)
+      window.dispatchEvent(new Event('proteus:initial-sync-started'))
+      toast('Re-syncing mailbox vectors, personas & inbox cache…')
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not start mailbox re-sync.', 'warning', 6000)
+    } finally {
+      setResyncing(false)
     }
   }
 
@@ -346,6 +361,15 @@ export function StyleProfile() {
             {/* Export / reset */}
             <section className="space-y-2.5 border-t border-ink-hairline pt-5">
               <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => void resyncMailbox()}
+                  disabled={resyncing || !account?.mailboxConnected}
+                  className="inline-flex items-center gap-2 rounded-pill border border-ink-hairline px-4 py-2 text-[13px] font-medium text-ink hover:border-ink/50 hover:bg-ink/5 disabled:opacity-50"
+                >
+                  {resyncing ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden /> : <RefreshCw className="h-4 w-4" aria-hidden />}
+                  Re-sync mailbox
+                </button>
                 <button type="button" onClick={exportProfile} className="inline-flex items-center gap-2 rounded-pill border border-ink-hairline px-4 py-2 text-[13px] font-medium text-ink hover:border-ink/50 hover:bg-ink/5">
                   <Download className="h-4 w-4" aria-hidden /> Export profile
                 </button>

@@ -136,6 +136,63 @@ class LanceDBVectorStore:
         table.add(data)
         return len(data)
 
+    def upsert_emails(
+        self,
+        emails: list[CleanedSentEmail],
+        embedder,
+        audience_modes: dict[str, str] | None = None,
+    ) -> int:
+        """Embed and upsert cleaned emails into LanceDB, deduplicated by message_id."""
+        if not emails:
+            return 0
+
+        deduped: list[CleanedSentEmail] = []
+        seen_ids: set[str] = set()
+        for email in reversed(emails):
+            if email.message_id not in seen_ids:
+                seen_ids.add(email.message_id)
+                deduped.append(email)
+        deduped.reverse()
+
+        table = self._get_or_create_table(force_recreate=False)
+        texts = [embedder.prepare_text(e.subject, e.clean_body) for e in deduped]
+        vectors = embedder.encode(texts)
+
+        data = []
+        for email, vector in zip(deduped, vectors):
+            greeting = self._extract_greeting(email.clean_body)
+            signoff = email.signature or self._extract_signoff(email.clean_body)
+            timestamp_str = email.timestamp.isoformat() if email.timestamp else ""
+            timestamp_epoch = self._compute_timestamp_epoch(timestamp_str)
+            audience_mode = (audience_modes or {}).get(email.message_id) or self._compute_audience_mode(email)
+            data.append(
+                {
+                    "message_id": email.message_id,
+                    "recipient_email": email.recipient_email,
+                    "recipient_domain": email.recipient_domain,
+                    "subject": email.subject,
+                    "clean_body": email.clean_body,
+                    "greeting": greeting,
+                    "signoff": signoff,
+                    "word_count": email.word_count,
+                    "timestamp": timestamp_str,
+                    "timestamp_epoch": timestamp_epoch,
+                    "audience_mode": audience_mode,
+                    "cc_count": 0,
+                    "bcc_count": 0,
+                    "vector": vector.tolist(),
+                }
+            )
+
+        for email in deduped:
+            try:
+                table.delete(f"message_id = '{self._escape_sql(email.message_id)}'")
+            except Exception:
+                pass
+
+        table.add(data)
+        return len(data)
+
     @staticmethod
     def _extract_greeting(text: str) -> str:
         """Extract the first greeting line from email body."""
